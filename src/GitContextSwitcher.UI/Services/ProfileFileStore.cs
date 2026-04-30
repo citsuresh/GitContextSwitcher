@@ -75,10 +75,38 @@ namespace GitContextSwitcher.UI.Services
                     File.Move(tempPath, _filePath);
                 }
             }
+            catch (Exception ex)
+            {
+                NotifySaveCompletedFailure(profiles, ex);
+                throw;
+            }
             finally
             {
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
             }
+            // Notify listeners that save completed successfully
+            NotifySaveCompletedSuccess(profiles);
         }
+
+        private void NotifySaveCompletedSuccess(List<WorkProfile> profiles)
+        {
+            try
+            {
+                SaveCompleted?.Invoke(this, new ProfileSaveResultEventArgs { Success = true, Profiles = profiles });
+            }
+            catch { }
+        }
+
+        private void NotifySaveCompletedFailure(List<WorkProfile> profiles, Exception error)
+        {
+            try
+            {
+                SaveCompleted?.Invoke(this, new ProfileSaveResultEventArgs { Success = false, Error = error, Profiles = profiles });
+            }
+            catch { }
+        }
+
+        // Event invoked when a save attempt completes
+        public event EventHandler<ProfileSaveResultEventArgs>? SaveCompleted;
     }
 }

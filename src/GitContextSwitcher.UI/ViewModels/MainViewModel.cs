@@ -17,6 +17,13 @@ namespace GitContextSwitcher.UI.ViewModels
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
 
+            // Subscribe to save completion events to surface per-profile save failures to UI
+            try
+            {
+                _store.SaveCompleted += Store_SaveCompleted;
+            }
+            catch { }
+
             // Try a quick synchronous load with a short timeout so saved profiles appear immediately when possible.
             try
             {
@@ -101,6 +108,46 @@ namespace GitContextSwitcher.UI.ViewModels
             Profiles.CollectionChanged += Profiles_CollectionChanged;
         }
 
+        private void Store_SaveCompleted(object? sender, GitContextSwitcher.UI.Services.ProfileSaveResultEventArgs e)
+        {
+            // If save failed, attempt to notify the owning profile VM(s). This runs on background thread from the store,
+            // so marshal to UI thread before touching ViewModel state.
+            try
+            {
+                var dsp = System.Windows.Application.Current?.Dispatcher;
+                if (dsp != null)
+                {
+                    dsp.Invoke(() => HandleSaveResult(e));
+                }
+                else
+                {
+                    HandleSaveResult(e);
+                }
+            }
+            catch { }
+        }
+
+        private void HandleSaveResult(GitContextSwitcher.UI.Services.ProfileSaveResultEventArgs e)
+        {
+            if (e == null || e.Profiles == null) return;
+
+                if (!e.Success)
+                {
+                    // Attach the exception message to matching profile VMs so UI can display it and allow manual retry
+                    foreach (var p in Profiles)
+                    {
+                        if (e.Profiles.Any(sp => string.Equals(sp.Name, p.Profile.Name, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            try { p.SaveStatus = e.Error?.Message ?? "Save failed"; } catch { }
+                        }
+                    }
+
+                    // Optionally, clear the message after a few seconds if desired; leave for manual retry now
+                    // Logging: write details to debug output for diagnosis
+                    try { System.Diagnostics.Debug.WriteLine($"Profile save failed: {e.Error}"); } catch { }
+                }
+        }
+
         /// <summary>
         /// Create a profile associated with a repository path.
         /// Returns the created ProfileTabViewModel.
@@ -117,7 +164,7 @@ namespace GitContextSwitcher.UI.ViewModels
                 name = repoPath;
             }
 
-            var profile = new WorkProfile { Name = name, Description = string.Empty, CreatedAt = DateTime.UtcNow, RepoPath = repoPath };
+            var profile = new WorkProfile { Name = name, Notes = string.Empty, CreatedAt = DateTime.UtcNow, RepoPath = repoPath };
             var vm = new ProfileTabViewModel(profile) { IsOpen = true };
             Profiles.Add(vm);
             vm.ProfileChanged += Child_ProfileChanged;
@@ -159,7 +206,7 @@ namespace GitContextSwitcher.UI.ViewModels
 
         public void AddProfile(string name)
         {
-            var profile = new WorkProfile { Name = name, Description = string.Empty, CreatedAt = DateTime.UtcNow };
+            var profile = new WorkProfile { Name = name, Notes = string.Empty, CreatedAt = DateTime.UtcNow };
             var vm = new ProfileTabViewModel(profile) { IsOpen = true };
             vm.ProfileChanged += Child_ProfileChanged;
             Profiles.Add(vm);
@@ -272,7 +319,6 @@ namespace GitContextSwitcher.UI.ViewModels
                             var clone = new Core.Models.WorkProfile
                             {
                                 Name = wp.Name,
-                                Description = wp.Description,
                                 RepoPath = wp.RepoPath,
                                 Notes = wp.Notes,
                                 CreatedAt = wp.CreatedAt,

@@ -1,4 +1,6 @@
 using GitContextSwitcher.Core.Models;
+using System.Linq;
+using GitContextSwitcher.UI.Services;
 
 namespace GitContextSwitcher.UI.ViewModels
 {
@@ -154,7 +156,8 @@ namespace GitContextSwitcher.UI.ViewModels
             }
         });
 
-        public string Summary => Profile.Description;
+        // Expose Notes for read-only display similar to Name; editing is via an explicit command
+        public string? Notes => Profile.Notes;
         private bool _isOpen;
         public bool IsOpen
         {
@@ -188,6 +191,88 @@ namespace GitContextSwitcher.UI.ViewModels
         {
             TempName = Name;
             IsEditingName = true;
+            System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+        });
+
+        // Notes editing
+        private bool _isEditingNotes;
+        public bool IsEditingNotes
+        {
+            get => _isEditingNotes;
+            set => SetProperty(ref _isEditingNotes, value);
+        }
+
+        private string? _tempNotes;
+        public string? TempNotes
+        {
+            get => _tempNotes;
+            set => SetProperty(ref _tempNotes, value);
+        }
+
+        private string? _saveStatus;
+        public string? SaveStatus
+        {
+            get => _saveStatus;
+            set => SetProperty(ref _saveStatus, value);
+        }
+
+        private RelayCommand? _editNotesCommand;
+        public RelayCommand EditNotesCommand => _editNotesCommand ??= new RelayCommand(_ =>
+        {
+            TempNotes = Notes;
+            IsEditingNotes = true;
+            System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+        });
+
+        private RelayCommand? _saveNotesCommand;
+        public RelayCommand SaveNotesCommand => _saveNotesCommand ??= new RelayCommand(_ =>
+        {
+            if (TempNotes != Notes)
+            {
+                Profile.Notes = TempNotes;
+                Profile.LastModifiedAt = DateTime.UtcNow;
+                OnPropertyChanged(nameof(Notes));
+                ProfileChanged?.Invoke(this, EventArgs.Empty);
+            }
+            IsEditingNotes = false;
+            System.Windows.Input.CommandManager.InvalidateRequerySuggested();
+            // Show transient saved status and rely on MainViewModel background save queue (triggered via ProfileChanged)
+            try
+            {
+                SaveStatus = "Saved";
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(2000).ConfigureAwait(false);
+                        var dsp = System.Windows.Application.Current?.Dispatcher;
+                        if (dsp != null)
+                        {
+                            dsp.Invoke(() => SaveStatus = null);
+                        }
+                        else
+                        {
+                            SaveStatus = null;
+                        }
+                    }
+                    catch
+                    {
+                        try { var dsp = System.Windows.Application.Current?.Dispatcher; dsp?.Invoke(() => SaveStatus = null); } catch { }
+                    }
+                });
+            }
+            catch
+            {
+                // If something unexpected happened while scheduling the status clear, set an error message briefly
+                try { SaveStatus = "Save queued"; } catch { }
+            }
+        });
+
+        private RelayCommand? _cancelEditNotesCommand;
+        public RelayCommand CancelEditNotesCommand => _cancelEditNotesCommand ??= new RelayCommand(_ =>
+        {
+            TempNotes = Notes;
+            IsEditingNotes = false;
             System.Windows.Input.CommandManager.InvalidateRequerySuggested();
         });
 

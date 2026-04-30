@@ -3,7 +3,7 @@ namespace GitContextSwitcher.Core.Models
     public class WorkProfile
     {
         public string Name { get; set; } = string.Empty;
-        public string Description { get; set; } = string.Empty;
+        // Description removed in favor of Notes
         // Filesystem path of the repository associated with this profile (optional)
         public string? RepoPath { get; set; }
         public string? Notes { get; set; }

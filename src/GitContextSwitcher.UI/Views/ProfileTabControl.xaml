@@ -18,7 +18,8 @@
     <Border Padding="10">
         <Grid>
             <!-- Content grid allows overlaying a loading panel -->
-            <StackPanel>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                <StackPanel>
             <!-- First line: profile name and edit button aligned to the right -->
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -84,10 +85,51 @@
 
             <!-- Repository details collapsible card (populated by control) -->
             <Expander x:Name="RepoExpander" Header="Repository details" IsExpanded="False" Visibility="Visible" Margin="0,8,0,0">
-                <Border x:Name="RepoInfoHost" Padding="6" />
+                <Border Padding="6">
+                    <!-- Host for the RepoInfoControl (created by code-behind) -->
+                    <Border x:Name="RepoInfoHost" Padding="6" />
+                </Border>
             </Expander>
+
+            <!-- Notes section shown below repository details with its own heading -->
+            <TextBlock Text="Notes" FontWeight="SemiBold" Margin="0,2,0,4" />
+            <Border Padding="6" Background="#FFF" BorderThickness="1" Margin="0,0,0,6">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Overlapping notes display/editor area -->
+                    <Grid Grid.Column="0">
+                        <!-- Read-only notes wrapped in ScrollViewer to show scrollbars when content large -->
+                        <!-- Fixed-height read-only viewer (approx. 10 rows) with scrollbar when content exceeds -->
+                        <ScrollViewer x:Name="NotesViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Height="200" Visibility="{Binding IsEditingNotes, Converter={StaticResource InverseBoolToVisibilityConverter}}">
+                            <TextBlock TextWrapping="Wrap" Text="{Binding Notes}" Foreground="Black" Margin="0,0,6,0" />
+                        </ScrollViewer>
+
+                        <!-- Inline editor for notes -->
+                        <Grid Visibility="{Binding IsEditingNotes, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Editor matches the fixed viewer height so the UI doesn't jump when entering edit mode -->
+                            <TextBox Grid.Column="0" x:Name="NotesEditor" Text="{Binding TempNotes, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Height="{Binding ElementName=NotesViewer, Path=Height}" />
+                            <Button Grid.Column="1" Style="{StaticResource InlineIconButtonStyle}" Content="✔" Margin="6,0,0,0" Command="{Binding SaveNotesCommand}" ToolTip="Save" />
+                            <Button Grid.Column="2" Style="{StaticResource InlineDangerIconButtonStyle}" Content="✖" Margin="6,0,0,0" Command="{Binding CancelEditNotesCommand}" ToolTip="Cancel" />
+                        </Grid>
+                    </Grid>
+
+                    <!-- Edit notes button -->
+                    <Button Grid.Column="1" Content="✎" Width="28" Height="24" Margin="8,0,0,0" ToolTip="Edit notes" Command="{Binding EditNotesCommand}" Style="{StaticResource HeaderIconButtonStyle}" Visibility="{Binding IsEditingNotes, Converter={StaticResource InverseBoolToVisibilityConverter}}" />
+                </Grid>
+            </Border>
             <!-- Files placeholder removed per request -->
-        </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
 
             <!-- Overlay loading panel -->
             <Border x:Name="LoadingOverlay" Background="#80FFFFFF" Visibility="Collapsed">

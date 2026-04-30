@@ -8,5 +8,8 @@ namespace GitContextSwitcher.UI.Services
     {
         Task<List<WorkProfile>> LoadAsync();
         Task SaveAsync(List<WorkProfile> profiles);
+
+        // Raised after a save attempt completes. Handlers receive details about success/failure and the profiles involved.
+        event EventHandler<ProfileSaveResultEventArgs>? SaveCompleted;
     }
 }
