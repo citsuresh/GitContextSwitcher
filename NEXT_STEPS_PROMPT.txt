@@ -1,0 +1,32 @@
+When you re-open the solution and continue working with the assistant, paste the following exact prompt back to the assistant so it can pick up where it left off (do not modify):
+
+--- COPY START ---
+I opened the Git Context Switcher solution created earlier. Continue implementing features.
+
+Context:
+- Repository: Git Context Switcher
+- .NET: 10
+- UI: WPF
+- Architecture: MVVM, Core + Infrastructure + UI projects
+
+Current state:
+- Solution and projects created with basic scaffolding.
+- Core contains WorkProfile model and service interfaces IGitService and IFileSystemService.
+- Infrastructure contains stub GitCliService and a working FileSystemService.
+- UI contains a minimal WPF app with MainWindow and MainViewModel.
+
+Goals for next session (pick one and implement):
+1) Implement a safe method in Core to create a WorkProfile by querying IGitService for modified and untracked files and generate a patch via CreatePatchAsync; persist metadata to a profiles folder.
+2) Implement IGitService.CreateStashAsync in Infrastructure using the Git CLI (must be non-destructive and not auto-drop stashes). Include unit tests for the behavior.
+3) Add a ProfilesView in the UI bound to MainViewModel.Profiles and implement commands to create and restore profiles (UI-only wiring; operations call into Core services).
+
+Constraints & rules to follow when implementing:
+- Follow the project's CORE PRINCIPLES and ARCHITECTURE RULES in every change.
+- Do not perform any destructive operations without explicit user intent.
+- Keep changes minimal and compilable.
+
+Tell me which of the three goals you will start with, then implement it.
+--- COPY END ---
+
+Notes:
+- After you paste the prompt back to the assistant, it will continue by selecting one goal and implementing changes. The assistant will modify files in this workspace directly.
