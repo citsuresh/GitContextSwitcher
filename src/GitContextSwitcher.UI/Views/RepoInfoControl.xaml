@@ -1,0 +1,55 @@
+<UserControl x:Class="GitContextSwitcher.UI.Views.RepoInfoControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="clr-namespace:GitContextSwitcher.UI.Views"
+             mc:Ignorable="d"
+             d:DesignHeight="160" d:DesignWidth="480">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="../Themes/SharedStyles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Border BorderBrush="Gray" BorderThickness="1" Padding="8" Margin="0,8,0,0">
+        <Grid>
+            <StackPanel>
+                <TextBlock x:Name="StatusText" FontWeight="SemiBold" />
+                <Grid Margin="0,6,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Name:" FontWeight="Bold" />
+                        <TextBlock x:Name="NameText" Text="-" />
+                        <TextBlock Text="Branch:" FontWeight="Bold" Margin="0,8,0,0" />
+                        <TextBlock x:Name="BranchText" Text="-" />
+                        <TextBlock Text="Last commit:" FontWeight="Bold" Margin="0,8,0,0" />
+                        <TextBlock x:Name="HeadText" Text="-" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                        <TextBlock Text="Commits:" FontWeight="Bold" />
+                        <TextBlock x:Name="CommitsText" Text="-" />
+                        <TextBlock Text="Status:" FontWeight="Bold" Margin="0,8,0,0" />
+                        <TextBlock x:Name="DirtyText" Text="-" />
+                        <TextBlock Text="Remotes:" FontWeight="Bold" Margin="0,8,0,0" />
+                        <TextBlock x:Name="RemotesText" Text="-" TextWrapping="Wrap" Width="220" />
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+
+            <Button x:Name="RefreshButton" Width="36" Height="28" FontSize="20" ToolTip="Refresh repository info" Content="⟳" 
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="4" Click="RefreshButton_Click">
+                <Button.Style>
+                    <StaticResource ResourceKey="InlineIconButtonStyle" />
+                </Button.Style>
+            </Button>
+        </Grid>
+    </Border>
+</UserControl>

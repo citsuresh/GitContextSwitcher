@@ -59,12 +59,52 @@ namespace GitContextSwitcher.UI
             if (DataContext is ViewModels.MainViewModel vm)
             {
                 vm.Profiles.CollectionChanged += Profiles_CollectionChanged;
+                // Subscribe to profile repository pick requests
+                foreach (var p in vm.Profiles)
+                {
+                    p.RequestRepositoryPick += (s, evt) => Profile_RequestRepositoryPick(s, evt);
+                }
+            }
+        }
+
+        private void Profile_RequestRepositoryPick(object? sender, ViewModels.ProfileTabViewModel.RepositoryPickRequestedEventArgs e)
+        {
+            var dlg = new Views.RepositoryPicker { Owner = this };
+            var result = dlg.ShowDialog();
+            if (result == true)
+            {
+                e.SelectedPath = dlg.SelectedPath;
             }
         }
 
         private void ProfileTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            // Keep selection logic minimal; new profiles are added via Add button
+            // When selection changes, ensure the newly selected tab's control triggers lazy load
+            void TryTriggerEnsure()
+            {
+                try
+                {
+                    if (ProfileTabs.SelectedItem is ViewModels.ProfileTabViewModel vm)
+                    {
+                        // Search the visual tree for ProfileTabControl instances and pick the one whose DataContext matches the selected VM.
+                        foreach (var ctrl in FindVisualChildren<Views.ProfileTabControl>(ProfileTabs))
+                        {
+                            if (ctrl != null && ReferenceEquals(ctrl.DataContext, vm))
+                            {
+                                // Fire-and-forget
+                                _ = ctrl.EnsureRepoInfoLoadedAsync();
+                                return;
+                            }
+                        }
+
+                        // If we didn't find the control yet, the visual tree might not be realized. Schedule a retry at Loaded priority.
+                        this.Dispatcher.BeginInvoke((Action)(() => TryTriggerEnsure()), System.Windows.Threading.DispatcherPriority.Loaded);
+                    }
+                }
+                catch { }
+            }
+
+            TryTriggerEnsure();
         }
 
         private void ExitMenu_Click(object sender, RoutedEventArgs e)
@@ -194,6 +234,20 @@ namespace GitContextSwitcher.UI
                 if (result != null) return result;
             }
             return null;
+        }
+
+        private static IEnumerable<T> FindVisualChildren<T>(DependencyObject dep) where T : DependencyObject
+        {
+            if (dep == null) yield break;
+            for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(dep); i++)
+            {
+                var child = System.Windows.Media.VisualTreeHelper.GetChild(dep, i);
+                if (child is T t) yield return t;
+                foreach (var descendant in FindVisualChildren<T>(child))
+                {
+                    yield return descendant;
+                }
+            }
         }
 
         private static T? FindVisualChildByName<T>(DependencyObject parent, string name) where T : FrameworkElement

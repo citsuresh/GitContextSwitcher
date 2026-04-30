@@ -20,6 +20,7 @@ namespace GitContextSwitcher.UI
 
             services.AddSingleton<GitContextSwitcher.Core.Services.IGitService, GitContextSwitcher.Infrastructure.Services.GitCliService>();
             services.AddSingleton<GitContextSwitcher.Core.Services.IFileSystemService, GitContextSwitcher.Infrastructure.Services.FileSystemService>();
+            services.AddSingleton<GitContextSwitcher.UI.Services.IProfileStore, GitContextSwitcher.UI.Services.ProfileFileStore>();
             services.AddSingleton<GitContextSwitcher.UI.ViewModels.MainViewModel>();
 
             Services = services.BuildServiceProvider();

@@ -3,19 +3,100 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Windows;
 using GitContextSwitcher.Core.Models;
 
 namespace GitContextSwitcher.UI.ViewModels
 {
     public class MainViewModel : BaseViewModel
     {
-        public MainViewModel()
+        private readonly GitContextSwitcher.UI.Services.IProfileStore _store;
+
+        public MainViewModel(GitContextSwitcher.UI.Services.IProfileStore store)
         {
-            // Ensure at least one open profile exists at startup
-            if (!Profiles.Any())
+            _store = store ?? throw new ArgumentNullException(nameof(store));
+
+            // Try a quick synchronous load with a short timeout so saved profiles appear immediately when possible.
+            try
             {
-                AddProfile("New Profile");
+                var quickLoad = Task.Run(() => _store.LoadAsync());
+                if (quickLoad.Wait(300)) // 300ms quick window
+                {
+                    var quick = quickLoad.Result;
+                    if (quick != null && quick.Any())
+                    {
+                        // Populate Profiles on UI thread immediately
+                        Profiles.Clear();
+                        foreach (var p in quick)
+                        {
+                            var vm = new ProfileTabViewModel(p) { IsOpen = true };
+                            vm.ProfileChanged += Child_ProfileChanged;
+                            Profiles.Add(vm);
+                        }
+                        SelectedProfile = Profiles.FirstOrDefault();
+                    }
+                }
             }
+            catch
+            {
+                // Ignore quick-load failures; background loader will populate later
+            }
+
+            // Load saved profiles in background so UI can come up quickly.
+            // Heavy per-profile work (git discovery, etc.) should happen when each tab loads.
+            _ = Task.Run(async () =>
+            {
+                List<WorkProfile> loaded = new();
+                try
+                {
+                    loaded = await _store.LoadAsync().ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Ignore load errors and treat as empty set
+                    loaded = new List<WorkProfile>();
+                }
+
+                // Populate the observable collection on the UI thread
+                try
+                {
+                    System.Windows.Application.Current.Dispatcher.Invoke(() =>
+                    {
+                        // Replace current Profiles with the loaded set to avoid duplicates.
+                        // This prevents the quick-load + background-load path from adding the same profiles twice.
+                        if (loaded.Any())
+                        {
+                            Profiles.Clear();
+                            foreach (var p in loaded)
+                            {
+                                var vm = new ProfileTabViewModel(p) { IsOpen = true };
+                                vm.ProfileChanged += Child_ProfileChanged;
+                                Profiles.Add(vm);
+                            }
+
+                            // Select the first loaded profile by default
+                            SelectedProfile = Profiles.FirstOrDefault();
+                            OnPropertyChanged(nameof(SelectedProfile));
+                        }
+                        else
+                        {
+                            // Ensure at least one open profile exists at startup
+                            if (!Profiles.Any())
+                            {
+                                AddProfile("New Profile");
+                                SelectedProfile = Profiles.FirstOrDefault();
+                                OnPropertyChanged(nameof(SelectedProfile));
+                            }
+                        }
+                    });
+                }
+                catch
+                {
+                    // Dispatcher might not be available in unit tests; ignore and leave Profiles empty
+                }
+            });
+
             // Raise CanCloseAny when collection changes
             Profiles.CollectionChanged += Profiles_CollectionChanged;
         }
@@ -39,9 +120,11 @@ namespace GitContextSwitcher.UI.ViewModels
             var profile = new WorkProfile { Name = name, Description = string.Empty, CreatedAt = DateTime.UtcNow, RepoPath = repoPath };
             var vm = new ProfileTabViewModel(profile) { IsOpen = true };
             Profiles.Add(vm);
+            vm.ProfileChanged += Child_ProfileChanged;
             SelectedProfile = vm;
             OnPropertyChanged(nameof(OpenProfiles));
             OnPropertyChanged(nameof(CanCloseAny));
+            _store.SaveAsync(Profiles.Select(p => p.Profile).ToList()).ConfigureAwait(false);
             return vm;
         }
 
@@ -72,14 +155,18 @@ namespace GitContextSwitcher.UI.ViewModels
             set => SetProperty(ref _selectedProfile, value);
         }
 
+        private ProfileTabViewModel? _previousSelected;
+
         public void AddProfile(string name)
         {
             var profile = new WorkProfile { Name = name, Description = string.Empty, CreatedAt = DateTime.UtcNow };
             var vm = new ProfileTabViewModel(profile) { IsOpen = true };
+            vm.ProfileChanged += Child_ProfileChanged;
             Profiles.Add(vm);
             SelectedProfile = vm;
             OnPropertyChanged(nameof(OpenProfiles));
             OnPropertyChanged(nameof(CanCloseAny));
+            _store.SaveAsync(Profiles.Select(p => p.Profile).ToList()).ConfigureAwait(false);
         }
 
         public void AddProfile()
@@ -113,6 +200,7 @@ namespace GitContextSwitcher.UI.ViewModels
                 SelectedProfile = vm;
                 OnPropertyChanged(nameof(OpenProfiles));
                 OnPropertyChanged(nameof(ClosedProfiles));
+                _store.SaveAsync(Profiles.Select(pr => pr.Profile).ToList()).ConfigureAwait(false);
             }
         });
 
@@ -133,6 +221,7 @@ namespace GitContextSwitcher.UI.ViewModels
                     SelectedProfile = Profiles.FirstOrDefault();
                 }
                 OnPropertyChanged(nameof(CanCloseAny));
+                _store.SaveAsync(Profiles.Select(pr => pr.Profile).ToList()).ConfigureAwait(false);
             }
         });
 
@@ -145,7 +234,64 @@ namespace GitContextSwitcher.UI.ViewModels
             OnPropertyChanged(nameof(OpenProfiles));
             OnPropertyChanged(nameof(ClosedProfiles));
             OnPropertyChanged(nameof(CanCloseAny));
+            _store.SaveAsync(Profiles.Select(pr => pr.Profile).ToList()).ConfigureAwait(false);
         });
+
+        private void Child_ProfileChanged(object? sender, EventArgs e)
+        {
+            // Persist on child change
+            // Persist on child change. Enqueue a background save which trims large collections and persists atomically.
+            EnqueueBackgroundSave();
+        }
+
+        private readonly object _saveLock = new();
+        private System.Threading.Tasks.Task? _backgroundSaveTask;
+        private System.Threading.CancellationTokenSource? _saveCts;
+
+        // Enqueue a background save which persists changes transactionally and trims large collections.
+        private void EnqueueBackgroundSave(int delayMs = 500)
+        {
+            lock (_saveLock)
+            {
+                _saveCts?.Cancel();
+                _saveCts = new System.Threading.CancellationTokenSource();
+                var token = _saveCts.Token;
+
+                _backgroundSaveTask = System.Threading.Tasks.Task.Run(async () =>
+                {
+                    try
+                    {
+                        await System.Threading.Tasks.Task.Delay(delayMs, token).ConfigureAwait(false);
+                        if (token.IsCancellationRequested) return;
+
+                        // Prepare a trimmed copy of profiles to avoid serializing large collections
+                        var toSave = Profiles.Select(p =>
+                        {
+                            var wp = p.Profile;
+                            // Trim Files and AuditHistory to last 50 entries to limit file size
+                            var clone = new Core.Models.WorkProfile
+                            {
+                                Name = wp.Name,
+                                Description = wp.Description,
+                                RepoPath = wp.RepoPath,
+                                Notes = wp.Notes,
+                                CreatedAt = wp.CreatedAt,
+                                LastModifiedAt = wp.LastModifiedAt,
+                                PatchFilePath = wp.PatchFilePath,
+                                StashRef = wp.StashRef,
+                                Files = wp.Files?.TakeLast(50).ToList() ?? new List<Core.Models.ProfileFileEntry>(),
+                                AuditHistory = wp.AuditHistory?.TakeLast(50).ToList() ?? new List<Core.Models.AuditEntry>()
+                            };
+                            return clone;
+                        }).ToList();
+
+                        await _store.SaveAsync(toSave).ConfigureAwait(false);
+                    }
+                    catch (System.OperationCanceledException) { }
+                    catch { }
+                }, token);
+            }
+        }
 
         // Pin/unpin feature removed
     }

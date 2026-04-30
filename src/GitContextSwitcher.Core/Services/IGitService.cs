@@ -5,5 +5,6 @@ namespace GitContextSwitcher.Core.Services
         Task<IReadOnlyList<string>> GetModifiedTrackedFilesAsync(string repoPath);
         Task<IReadOnlyList<string>> GetUntrackedFilesAsync(string repoPath);
         Task<string> CreatePatchAsync(string repoPath, IEnumerable<string> files, string patchOutputPath);
+        Task<Models.RepoInfo> GetRepoInfoAsync(string repoPath);
     }
 }
