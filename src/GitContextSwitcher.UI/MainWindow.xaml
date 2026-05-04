@@ -116,7 +116,21 @@
                         </Grid.ColumnDefinitions>
                         <StackPanel Orientation="Vertical">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="{Binding Name}" Margin="6,2,4,0" FontWeight="Bold"/>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Name}" Margin="6,2,4,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="FontWeight" Value="Normal" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsDirty}" Value="True">
+                                                        <Setter Property="FontWeight" Value="Bold" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="*" Margin="2,2,4,0" Foreground="Crimson" Visibility="{Binding IsDirty, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                </StackPanel>
                                 <!-- small spinner in tab header when profile is loading -->
                                 <Border Width="12" Height="12" Margin="4,4,0,0" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibilityConverter}}">
                                     <Viewbox Stretch="Uniform">

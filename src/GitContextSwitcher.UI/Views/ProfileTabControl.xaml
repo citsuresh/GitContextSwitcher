@@ -64,9 +64,16 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- Edit button (right) -->
-                <Button Grid.Column="1" Content="✎" Width="28" Height="24" Margin="8,0,0,0" ToolTip="Edit profile name" Command="{Binding EditNameCommand}" Visibility="{Binding IsEditingName, Converter={StaticResource InverseBoolToVisibilityConverter}}" Style="{StaticResource HeaderIconButtonStyle}" />
+                <!-- Save and Edit buttons (right) -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <!-- Save button shown when profile has unsaved changes -->
+                    <Button Content="💾" Width="32" Height="24" Margin="0,0,6,0" ToolTip="Save profile" Command="{Binding SaveCommand}" Visibility="{Binding IsDirty, Converter={StaticResource BoolToVisibilityConverter}}" Style="{StaticResource HeaderIconButtonStyle}" />
+                    <Button Content="✎" Width="28" Height="24" Margin="0,0,0,0" ToolTip="Edit profile name" Command="{Binding EditNameCommand}" Visibility="{Binding IsEditingName, Converter={StaticResource InverseBoolToVisibilityConverter}}" Style="{StaticResource HeaderIconButtonStyle}" />
+                </StackPanel>
             </Grid>
+
+            <!-- Inline save status (errors or transient messages) -->
+            <TextBlock Text="{Binding SaveStatus}" Foreground="DarkRed" FontSize="12" Margin="0,4,0,0" />
 
             <!-- Repository path and pick button -->
             <Grid Margin="0,6,0,0">

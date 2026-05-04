@@ -31,7 +31,7 @@ namespace GitContextSwitcher.UI.ViewModels
                     Profile.Name = value;
                     Profile.LastModifiedAt = DateTime.UtcNow;
                     OnPropertyChanged(nameof(Name));
-                    ProfileChanged?.Invoke(this, EventArgs.Empty);
+                    IsDirty = true;
                 }
             }
         }
@@ -151,10 +151,18 @@ namespace GitContextSwitcher.UI.ViewModels
             {
                 Profile.RepoPath = args.SelectedPath;
                 Profile.LastModifiedAt = DateTime.UtcNow;
-                OnPropertyChanged(nameof(RepoPath));
-                ProfileChanged?.Invoke(this, EventArgs.Empty);
+                    OnPropertyChanged(nameof(RepoPath));
+                    IsDirty = true;
             }
         });
+
+        // Indicates the profile has local unsaved changes that should be persisted explicitly
+        private bool _isDirty;
+        public bool IsDirty
+        {
+            get => _isDirty;
+            set => SetProperty(ref _isDirty, value);
+        }
 
         // Expose Notes for read-only display similar to Name; editing is via an explicit command
         public string? Notes => Profile.Notes;
@@ -232,41 +240,121 @@ namespace GitContextSwitcher.UI.ViewModels
                 Profile.Notes = TempNotes;
                 Profile.LastModifiedAt = DateTime.UtcNow;
                 OnPropertyChanged(nameof(Notes));
-                ProfileChanged?.Invoke(this, EventArgs.Empty);
+                IsDirty = true;
             }
             IsEditingNotes = false;
             System.Windows.Input.CommandManager.InvalidateRequerySuggested();
-            // Show transient saved status and rely on MainViewModel background save queue (triggered via ProfileChanged)
+            // Do not auto-save here; mark dirty and let the user click Save or rely on background save triggered elsewhere
+        });
+
+        private RelayCommand? _saveCommand;
+        public RelayCommand SaveCommand => _saveCommand ??= new RelayCommand(async _ => await SaveNowAsync());
+
+        private async Task SaveNowAsync()
+        {
             try
             {
-                SaveStatus = "Saved";
-                _ = Task.Run(async () =>
+                // Show saving status on UI thread
+                try
                 {
+                    var dsp = System.Windows.Application.Current?.Dispatcher;
+                    if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => SaveStatus = "Saving...");
+                    else SaveStatus = "Saving...";
+                }
+                catch { SaveStatus = "Saving..."; }
+
+                var store = App.Services.GetService(typeof(GitContextSwitcher.UI.Services.IProfileStore)) as GitContextSwitcher.UI.Services.IProfileStore;
+                if (store != null)
+                {
+                    // Load existing profiles and merge this profile into the set so we don't overwrite other profiles
+                    List<WorkProfile> existing;
                     try
                     {
-                        await Task.Delay(2000).ConfigureAwait(false);
-                        var dsp = System.Windows.Application.Current?.Dispatcher;
-                        if (dsp != null)
-                        {
-                            dsp.Invoke(() => SaveStatus = null);
-                        }
-                        else
-                        {
-                            SaveStatus = null;
-                        }
+                        existing = await store.LoadAsync().ConfigureAwait(false) ?? new List<WorkProfile>();
                     }
                     catch
                     {
-                        try { var dsp = System.Windows.Application.Current?.Dispatcher; dsp?.Invoke(() => SaveStatus = null); } catch { }
+                        existing = new List<WorkProfile>();
                     }
-                });
+
+                    // Replace matching profile by Id first, then by Name fallback; preserve existing Id when matching by name
+                    var index = existing.FindIndex(sp => sp.Id == Profile.Id);
+                    if (index >= 0)
+                    {
+                        existing[index] = Profile;
+                    }
+                    else
+                    {
+                        // Fallback: match by name for older files or if Id changed
+                        var nameIndex = existing.FindIndex(sp => string.Equals(sp.Name, Profile.Name, StringComparison.OrdinalIgnoreCase));
+                        if (nameIndex >= 0)
+                        {
+                            // Preserve the existing stable Id for continuity
+                            Profile.Id = existing[nameIndex].Id;
+                            existing[nameIndex] = Profile;
+                        }
+                        else
+                        {
+                            existing.Add(Profile);
+                        }
+                    }
+
+                    // Save the merged list back to disk
+                    await store.SaveAsync(existing).ConfigureAwait(false);
+
+                    // On success, clear dirty flag and show transient saved status
+                    try
+                    {
+                        var dsp = System.Windows.Application.Current?.Dispatcher;
+                        if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() =>
+                        {
+                            IsDirty = false;
+                            SaveStatus = "Saved";
+                        });
+                        else
+                        {
+                            IsDirty = false;
+                            SaveStatus = "Saved";
+                        }
+
+                        // Clear the saved status after a short delay
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await Task.Delay(2000).ConfigureAwait(false);
+                                var dsp2 = System.Windows.Application.Current?.Dispatcher;
+                                if (dsp2 != null)
+                                {
+                                    dsp2.Invoke(() => SaveStatus = null);
+                                }
+                                else
+                                {
+                                    SaveStatus = null;
+                                }
+                            }
+                            catch { }
+                        });
+                    }
+                    catch { }
+                }
+                else
+                {
+                    // Fallback: notify change and rely on MainViewModel background save
+                    ProfileChanged?.Invoke(this, EventArgs.Empty);
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                // If something unexpected happened while scheduling the status clear, set an error message briefly
-                try { SaveStatus = "Save queued"; } catch { }
+                try
+                {
+                    var dsp = System.Windows.Application.Current?.Dispatcher;
+                    if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => SaveStatus = ex.Message);
+                    else SaveStatus = ex.Message;
+                }
+                catch { }
             }
-        });
+        }
 
         private RelayCommand? _cancelEditNotesCommand;
         public RelayCommand CancelEditNotesCommand => _cancelEditNotesCommand ??= new RelayCommand(_ =>

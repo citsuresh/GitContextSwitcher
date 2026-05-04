@@ -9,6 +9,9 @@ namespace GitContextSwitcher.UI.Services
 {
     public class ProfileFileStore : IProfileStore
     {
+        // Protect file access to avoid concurrent reads/writes from multiple callers
+        private readonly System.Threading.SemaphoreSlim _fileLock = new(1, 1);
+
         private readonly string _filePath;
         private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
         {
@@ -26,26 +29,45 @@ namespace GitContextSwitcher.UI.Services
         {
             if (!File.Exists(_filePath)) return new List<WorkProfile>();
 
-            try
+            const int maxAttempts = 2;
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
             {
-                // Use asynchronous read to avoid blocking thread pool threads
-                await using var fs = File.OpenRead(_filePath);
-                var profiles = await JsonSerializer.DeserializeAsync<List<WorkProfile>>(fs, _jsonOptions).ConfigureAwait(false);
-                return profiles ?? new List<WorkProfile>();
+                await _fileLock.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    // Use asynchronous read to avoid blocking thread pool threads
+                    await using var fs = File.OpenRead(_filePath);
+                    var profiles = await JsonSerializer.DeserializeAsync<List<WorkProfile>>(fs, _jsonOptions).ConfigureAwait(false);
+                    return profiles ?? new List<WorkProfile>();
+                }
+                catch
+                {
+                    // On first failure, retry once after a short delay to handle transient IO issues
+                    if (attempt == maxAttempts - 1)
+                    {
+                        return new List<WorkProfile>();
+                    }
+                }
+                finally
+                {
+                    _fileLock.Release();
+                }
+
+                // small backoff before retry
+                try { await Task.Delay(200).ConfigureAwait(false); } catch { }
             }
-            catch
-            {
-                // On error, return empty list to avoid crashing the app on malformed file
-                return new List<WorkProfile>();
-            }
+
+            return new List<WorkProfile>();
         }
 
         public async Task SaveAsync(List<WorkProfile> profiles)
         {
-            // Write to a temp file first, then replace the destination atomically.
+            // Ensure only one save/load operation touches the file at a time
+            await _fileLock.WaitAsync().ConfigureAwait(false);
             var tempPath = _filePath + ".tmp";
             try
             {
+                // Write to a temp file first, then replace the destination atomically.
                 // Ensure directory exists
                 Directory.CreateDirectory(Path.GetDirectoryName(_filePath) ?? string.Empty);
 
@@ -83,7 +105,9 @@ namespace GitContextSwitcher.UI.Services
             finally
             {
                 try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+                _fileLock.Release();
             }
+
             // Notify listeners that save completed successfully
             NotifySaveCompletedSuccess(profiles);
         }

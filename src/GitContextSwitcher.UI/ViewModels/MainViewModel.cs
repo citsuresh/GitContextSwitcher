@@ -131,21 +131,38 @@ namespace GitContextSwitcher.UI.ViewModels
         {
             if (e == null || e.Profiles == null) return;
 
-                if (!e.Success)
+            // If save succeeded, clear dirty flags on matching profile VMs; if failed, surface the error
+            if (e.Success)
+            {
+                foreach (var p in Profiles)
                 {
-                    // Attach the exception message to matching profile VMs so UI can display it and allow manual retry
-                    foreach (var p in Profiles)
+                    if (e.Profiles.Any(sp => string.Equals(sp.Name, p.Profile.Name, StringComparison.OrdinalIgnoreCase)))
                     {
-                        if (e.Profiles.Any(sp => string.Equals(sp.Name, p.Profile.Name, StringComparison.OrdinalIgnoreCase)))
+                        try
                         {
-                            try { p.SaveStatus = e.Error?.Message ?? "Save failed"; } catch { }
+                            p.IsDirty = false;
+                            // Clear any previous error status
+                            p.SaveStatus = null;
                         }
+                        catch { }
                     }
-
-                    // Optionally, clear the message after a few seconds if desired; leave for manual retry now
-                    // Logging: write details to debug output for diagnosis
-                    try { System.Diagnostics.Debug.WriteLine($"Profile save failed: {e.Error}"); } catch { }
                 }
+
+                try { System.Diagnostics.Debug.WriteLine($"Profile save succeeded for: {string.Join(',', e.Profiles.Select(pp => pp.Name))}"); } catch { }
+                return;
+            }
+
+            // Save failed: attach the exception message to matching profile VMs so UI can display it and allow manual retry
+            foreach (var p in Profiles)
+            {
+                if (e.Profiles.Any(sp => string.Equals(sp.Name, p.Profile.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    try { p.SaveStatus = e.Error?.Message ?? "Save failed"; } catch { }
+                }
+            }
+
+            // Logging: write details to debug output for diagnosis
+            try { System.Diagnostics.Debug.WriteLine($"Profile save failed: {e.Error}"); } catch { }
         }
 
         /// <summary>

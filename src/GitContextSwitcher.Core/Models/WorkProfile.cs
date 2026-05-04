@@ -2,6 +2,10 @@ namespace GitContextSwitcher.Core.Models
 {
     public class WorkProfile
     {
+        // Stable identifier for the profile. Use GUID so edits/renames can be tracked reliably.
+        // Initialized to a new GUID for newly-created instances and for older JSON that lacks an Id.
+        public Guid Id { get; set; } = Guid.NewGuid();
+
         public string Name { get; set; } = string.Empty;
         // Description removed in favor of Notes
         // Filesystem path of the repository associated with this profile (optional)
