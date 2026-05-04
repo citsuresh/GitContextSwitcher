@@ -108,6 +108,102 @@ namespace GitContextSwitcher.UI.Views
         {
             // If RepoPath changed, refresh repo info (no-op rebuild touch)
             _ = EnsureRepoInfoLoadedAsync();
+            // Also expand the pending changes tree when profile changes
+            try
+            {
+                Dispatcher.InvokeAsync(() => ExpandPendingTree());
+            }
+            catch { }
+            // Header count is bound in XAML; no manual update required here
+        }
+
+        private void ExpandPendingTree()
+        {
+            try
+            {
+                if (PendingTreeView == null) return;
+                // Ensure item containers are generated before expanding. If generation is not complete, wait for StatusChanged.
+                if (PendingTreeView.ItemContainerGenerator.Status != System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
+                {
+                    void StatusChangedHandler(object? s, EventArgs args)
+                    {
+                        try
+                        {
+                            PendingTreeView.ItemContainerGenerator.StatusChanged -= StatusChangedHandler;
+                        }
+                        catch { }
+                        // Defer expansion slightly to allow layout to settle
+                        PendingTreeView.Dispatcher.BeginInvoke((Action)(() => ExpandPendingTree()), System.Windows.Threading.DispatcherPriority.Background);
+                    }
+
+                    try
+                    {
+                        PendingTreeView.ItemContainerGenerator.StatusChanged += StatusChangedHandler;
+                    }
+                    catch
+                    {
+                        // Fall back to forcing layout and attempting expansion
+                        try { PendingTreeView.UpdateLayout(); } catch { }
+                        PendingTreeView.Dispatcher.BeginInvoke((Action)(() => ExpandPendingTree()), System.Windows.Threading.DispatcherPriority.Background);
+                    }
+
+                    // Trigger layout generation
+                    try { PendingTreeView.UpdateLayout(); } catch { }
+                    return;
+                }
+
+                PendingTreeView.Dispatcher.Invoke(() =>
+                {
+                    foreach (var item in PendingTreeView.Items)
+                    {
+                        if (PendingTreeView.ItemContainerGenerator.ContainerFromItem(item) is TreeViewItem tvi)
+                        {
+                            // Expand recursively
+                            ExpandTreeViewItemRecursive(tvi);
+                        }
+                        else
+                        {
+                            // Try to bring container into view / generate container
+                            try { PendingTreeView.UpdateLayout(); } catch { }
+                            if (PendingTreeView.ItemContainerGenerator.ContainerFromItem(item) is TreeViewItem tvi2)
+                            {
+                                ExpandTreeViewItemRecursive(tvi2);
+                            }
+                        }
+                    }
+                });
+            }
+            catch { }
+        }
+
+        private void ExpandTreeViewItemRecursive(TreeViewItem tvi)
+        {
+            try
+            {
+                tvi.IsExpanded = true;
+                // Force layout so child containers are generated
+                try { tvi.UpdateLayout(); } catch { }
+
+                foreach (var child in tvi.Items)
+                {
+                    var childContainer = tvi.ItemContainerGenerator.ContainerFromItem(child) as TreeViewItem;
+                    if (childContainer != null)
+                    {
+                        ExpandTreeViewItemRecursive(childContainer);
+                    }
+                    else
+                    {
+                        // Attempt to generate the child container
+                        try { tvi.UpdateLayout(); } catch { }
+                        childContainer = tvi.ItemContainerGenerator.ContainerFromItem(child) as TreeViewItem;
+                        if (childContainer != null)
+                        {
+                            ExpandTreeViewItemRecursive(childContainer);
+                        }
+                    }
+                }
+            }
+            catch { }
         }
 
         public void SetRepoInfo(Core.Models.RepoInfo info)
@@ -173,14 +269,22 @@ namespace GitContextSwitcher.UI.Views
                         try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: calling VM.RefreshRepoInfoAsync"); } catch { }
                         await pvm.RefreshRepoInfoAsync();
                         try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: returned from VM.RefreshRepoInfoAsync"); } catch { }
-                        if (pvm.RepoInfo != null)
-                        {
-                            SetRepoInfo(pvm.RepoInfo);
-                        }
-                        else
-                        {
-                            try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: VM.RepoInfo is null after refresh"); } catch { }
-                        }
+                    if (pvm.RepoInfo != null)
+                    {
+                        SetRepoInfo(pvm.RepoInfo);
+                    }
+                    else
+                    {
+                        try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: VM.RepoInfo is null after refresh"); } catch { }
+                    }
+
+                    // Ensure pending changes populate and show loading overlay until complete
+                    try
+                    {
+                        // Rebuild file tree and expand
+                        RebuildPendingFilesUI();
+                    }
+                    catch { }
                     }
                     else
                     {
@@ -199,11 +303,48 @@ namespace GitContextSwitcher.UI.Views
                         if (info != null)
                         {
                             SetRepoInfo(info);
+                            try { RebuildPendingFilesUI(); } catch { }
                         }
                     }
                 }
                 catch { }
             }
+        }
+
+        private void RebuildPendingFilesUI()
+        {
+            try
+            {
+                if (_vm == null) return;
+                // Show loading overlay while files are rebuilt
+                _vm.IsLoading = true;
+                // Fire-and-forget: allow async file list build to run and update tree when done
+                Dispatcher.BeginInvoke(async () =>
+                {
+                    try
+                    {
+                        // If VM has a RefreshRepoInfoCommand, call it to ensure files are fetched
+                        if (_vm.RefreshRepoInfoCommand.CanExecute(null))
+                        {
+                            await _vm.RefreshRepoInfoAsync();
+                        }
+                        else
+                        {
+                            // Otherwise just rebuild the existing tree
+                            _vm.RebuildFileTree();
+                        }
+
+                        // Expand tree items after rebuild
+                        ExpandPendingTree();
+                    }
+                    catch { }
+                    finally
+                    {
+                        try { _vm.IsLoading = false; } catch { }
+                    }
+                });
+            }
+            catch { }
         }
 
         private void NameEditor_PreviewKeyDown(object sender, KeyEventArgs e)

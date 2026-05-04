@@ -59,10 +59,10 @@ namespace GitContextSwitcher.UI
             if (DataContext is ViewModels.MainViewModel vm)
             {
                 vm.Profiles.CollectionChanged += Profiles_CollectionChanged;
-                // Subscribe to profile repository pick requests
+                // Subscribe to profile repository pick requests for existing profiles
                 foreach (var p in vm.Profiles)
                 {
-                    p.RequestRepositoryPick += (s, evt) => Profile_RequestRepositoryPick(s, evt);
+                    p.RequestRepositoryPick += Profile_RequestRepositoryPick;
                 }
             }
         }
@@ -519,6 +519,36 @@ namespace GitContextSwitcher.UI
 
         private void Profiles_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
         {
+            // Attach/detach handlers for newly added/removed profile VMs so repository pick requests are handled
+            try
+            {
+                if (e != null)
+                {
+                    if (e.NewItems != null)
+                    {
+                        foreach (var ni in e.NewItems)
+                        {
+                            if (ni is ViewModels.ProfileTabViewModel newVm)
+                            {
+                                newVm.RequestRepositoryPick += (s, evt) => Profile_RequestRepositoryPick(s, evt);
+                            }
+                        }
+                    }
+
+                    if (e.OldItems != null)
+                    {
+                        foreach (var oi in e.OldItems)
+                        {
+                            if (oi is ViewModels.ProfileTabViewModel oldVm)
+                            {
+                                try { oldVm.RequestRepositoryPick -= (s, evt) => Profile_RequestRepositoryPick(s, evt); } catch { }
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+
             // Delay update to allow layout to refresh
             Dispatcher.BeginInvoke((Action)(() => UpdateScrollButtonsVisibility()));
         }

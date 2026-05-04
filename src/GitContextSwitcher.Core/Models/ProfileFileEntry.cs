@@ -8,4 +8,7 @@ public class ProfileFileEntry
     public bool IsUntracked { get; set; }
     public long? FileSize { get; set; }
     public DateTime? LastModified { get; set; }
+
+    // New fields to carry richer git status information
+    public GitFileChange? GitChange { get; set; }
 }
