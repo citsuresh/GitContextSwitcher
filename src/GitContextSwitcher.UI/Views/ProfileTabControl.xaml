@@ -12,6 +12,13 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="../Themes/SharedStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <!-- Unified style for the bordered expander sections so collapsed spacing is consistent -->
+            <Style x:Key="SectionBorderStyle" TargetType="Border">
+                <Setter Property="BorderBrush" Value="#FFDDDDDD" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="4" />
+                <Setter Property="Margin" Value="0,8,0,4" />
+            </Style>
         </ResourceDictionary>
     </UserControl.Resources>
 
@@ -117,21 +124,24 @@
             </Grid>
 
             <!-- Repository details collapsible card (populated by control) -->
-            <Expander x:Name="RepoExpander" Header="Repository details" IsExpanded="False" Visibility="Visible" Margin="0,8,0,0">
-                <Border Padding="6">
-                    <!-- Host for the RepoInfoControl (created by code-behind) -->
-                    <Border x:Name="RepoInfoHost" Padding="6" />
-                </Border>
-            </Expander>
+            <Border Style="{StaticResource SectionBorderStyle}">
+                <Expander x:Name="RepoExpander" Header="Repository details" IsExpanded="False" Visibility="Visible">
+                    <Border Padding="6">
+                        <!-- Host for the RepoInfoControl (created by code-behind) -->
+                        <Border x:Name="RepoInfoHost" Padding="6" />
+                    </Border>
+                </Expander>
+            </Border>
 
             <!-- History expander moved to end of the content (rendered after pending changes) -->
 
             <!-- Notes section shown below repository details as an expander -->
-            <Expander x:Name="NotesExpander" Margin="0,2,0,4">
-                <Expander.Header>
-                    <TextBlock Text="Notes" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
-                </Expander.Header>
-                <Border Padding="6" Background="#FFF" BorderThickness="1" Margin="0,0,0,6">
+            <Border Style="{StaticResource SectionBorderStyle}">
+                <Expander x:Name="NotesExpander">
+                    <Expander.Header>
+                        <TextBlock Text="Notes" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                    </Expander.Header>
+                    <Border Padding="6" Background="#FFF" BorderThickness="1" Margin="0,0,0,6">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -165,10 +175,12 @@
                         <Button Grid.Column="1" Content="✎" Width="28" Height="24" Margin="8,0,0,0" ToolTip="Edit notes" Command="{Binding EditNotesCommand}" Style="{StaticResource HeaderIconButtonStyle}" Visibility="{Binding IsEditingNotes, Converter={StaticResource InverseBoolToVisibilityConverter}}" />
                     </Grid>
                 </Border>
-            </Expander>
+                </Expander>
+            </Border>
 
             <!-- Pending changes tree view as an expander (expanded by default) -->
-            <Expander x:Name="PendingExpander" Margin="0,8,0,4">
+            <Border Style="{StaticResource SectionBorderStyle}">
+                <Expander x:Name="PendingExpander">
                 <Expander.Header>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <!-- Folder icon rendered as a vector for crisp DPI scaling -->
@@ -262,16 +274,59 @@
                         <StackPanel Grid.Column="1" Orientation="Vertical" Margin="8,0,0,0">
                             <!-- Refresh icon button -->
                             <Button Command="{Binding RefreshFilesCommand}" ToolTip="Refresh" Style="{StaticResource InlineIconButtonStyle}" Width="28" Height="24">
-                                <TextBlock Text="⟳" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                <TextBlock Text="⟳" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Button>
                         </StackPanel>
                     </Grid>
-                </Border>
-            </Expander>
+                    </Border>
+                </Expander>
+            </Border>
             <!-- Files placeholder removed per request -->
 
             <!-- History expander: placed at bottom of the profile content -->
-            <Expander x:Name="HistoryExpander" Margin="0,4,0,2">
+            <!-- Saved Work Contexts expander: new UI skeleton -->
+            <Border Style="{StaticResource SectionBorderStyle}">
+                <Expander x:Name="SavedContextsExpander">
+                    <Expander.Header>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Saved Work Contexts" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                        <!-- Saved contexts count badge (mirrors Pending changes badge) -->
+                        <Border Style="{StaticResource CountBadgeStyle}" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding SavedContexts.Count}" Style="{StaticResource CountBadgeTextStyle}" />
+                        </Border>
+                    </StackPanel>
+                </Expander.Header>
+
+                <Border Padding="4" Background="#FFF" BorderThickness="1" Margin="0,0,0,4">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="20" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Orientation="Horizontal" Grid.Row="0" HorizontalAlignment="Right">
+                            <Button x:Name="SaveContextButton" Command="{Binding SaveContextCommand}" Style="{StaticResource InlineIconButtonStyle}" Width="132" Height="24" Margin="0,-6,6,0">Save Current Context</Button>
+                                    <Button Command="{Binding RefreshSavedContextsCommand}" Style="{StaticResource InlineIconButtonStyle}" Width="28" Height="24"  Margin="0,-2,0,0" ToolTip="Refresh" >
+                                        <TextBlock Text="⟳" FontSize="20" HorizontalAlignment="Center"  Margin="0,-8,0,0" VerticalAlignment="Center" />
+                            </Button>
+                        </StackPanel>
+
+                        <Grid Grid.Row="1">
+                            <DataGrid ItemsSource="{Binding SavedContexts}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" SelectionMode="Single" RowHeaderWidth="0" MinHeight="80">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Created" Binding="{Binding CreatedAt, StringFormat={}{0:G}}" Width="160" MinWidth="140" />
+                                    <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" MinWidth="240" />
+                                    <DataGridTextColumn Header="Files" Binding="{Binding FileCount}" Width="80" MinWidth="60" />
+                                    <DataGridTextColumn Header="Branch@SHA" Binding="{Binding HeadBranch}" Width="180" MinWidth="140" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Grid>
+                </Border>
+                </Expander>
+            </Border>
+            <Border Style="{StaticResource SectionBorderStyle}">
+                <Expander x:Name="HistoryExpander">
                 <Expander.Header>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <TextBlock Text="History" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
@@ -358,7 +413,8 @@
                     </Grid>
                 </Border>
 
-            </Expander>
+                </Expander>
+            </Border>
                 </StackPanel>
             </ScrollViewer>
 

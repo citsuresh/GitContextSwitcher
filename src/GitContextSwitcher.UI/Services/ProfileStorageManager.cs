@@ -111,6 +111,66 @@ namespace GitContextSwitcher.UI.Services
             catch { }
         }
 
+        // Create a per-context folder under the profile folder. Returns the full path.
+        public async Task<string> CreateContextFolderAsync(Guid profileId, Guid contextId)
+        {
+            var folder = AppPaths.GetProfileFolder(profileId);
+            var ctx = Path.Combine(folder, "contexts", contextId.ToString());
+            try
+            {
+                Directory.CreateDirectory(ctx);
+            }
+            catch { }
+            await Task.CompletedTask;
+            return ctx;
+        }
+
+        // Write context metadata (context.json) inside the context folder
+        public async Task WriteContextMetadataAsync(Guid profileId, SavedWorkContext context)
+        {
+            try
+            {
+                // Persist metadata into the canonical context folder named by the context Id
+                // (use context.Id to avoid divergence when callers set FolderName to a different value).
+                var ctxFolder = Path.Combine(AppPaths.GetProfileFolder(profileId), "contexts", context.Id.ToString());
+                Directory.CreateDirectory(ctxFolder);
+                var jf = Path.Combine(ctxFolder, "context.json");
+                using var st = File.Open(jf, FileMode.Create, FileAccess.Write, FileShare.None);
+                await JsonSerializer.SerializeAsync(st, context, _json).ConfigureAwait(false);
+            }
+            catch { }
+        }
+
+        // Read saved contexts list for a profile by reading profile.json (lightweight summaries)
+        public async Task<List<SavedWorkContext>> ReadSavedContextsAsync(Guid profileId)
+        {
+            try
+            {
+                var wp = await LoadProfileAsync(profileId).ConfigureAwait(false);
+                if (wp == null) return new List<SavedWorkContext>();
+                return wp.SavedContexts ?? new List<SavedWorkContext>();
+            }
+            catch { return new List<SavedWorkContext>(); }
+        }
+
+        // Delete context folder (used for cleanup on failure or explicit deletion)
+        public async Task<bool> DeleteContextFolderAsync(Guid profileId, SavedWorkContext context)
+        {
+            try
+            {
+                // Delete the canonical folder named by context Id. If FolderName was set differently
+                // previously, prefer the Id-based folder to avoid leaving a stray metadata-only folder.
+                var ctxFolder = Path.Combine(AppPaths.GetProfileFolder(profileId), "contexts", context.Id.ToString());
+                if (Directory.Exists(ctxFolder))
+                {
+                    Directory.Delete(ctxFolder, recursive: true);
+                }
+                await Task.CompletedTask;
+                return true;
+            }
+            catch { return false; }
+        }
+
         public async Task SaveProfileAsync(WorkProfile profile, int persistHistoryEntries = 50)
         {
             if (profile == null) return;
@@ -133,6 +193,7 @@ namespace GitContextSwitcher.UI.Services
                     PatchFilePath = profile.PatchFilePath,
                     StashRef = profile.StashRef,
                     Files = profile.Files?.TakeLast(50).ToList() ?? new List<ProfileFileEntry>(),
+                    SavedContexts = profile.SavedContexts?.ToList() ?? new List<SavedWorkContext>(),
                     AuditHistory = new System.Collections.ObjectModel.ObservableCollection<AuditEntry>(profile.AuditHistory?.OrderBy(a => a.Timestamp).TakeLast(persistHistoryEntries).ToList() ?? new List<AuditEntry>())
                 };
 

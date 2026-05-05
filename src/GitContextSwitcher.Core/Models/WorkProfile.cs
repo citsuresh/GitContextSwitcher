@@ -16,6 +16,9 @@ namespace GitContextSwitcher.Core.Models
         public string PatchFilePath { get; set; } = string.Empty;
         public string? StashRef { get; set; }
         public List<ProfileFileEntry> Files { get; set; } = new();
+        // Saved work contexts (lightweight summary kept in profile.json).
+        // Full context details are stored inside the per-profile context folder (context.json, patch, etc.).
+        public List<SavedWorkContext> SavedContexts { get; set; } = new();
         // AuditHistory removed from WorkProfile model. Use per-profile history.ndjson and load on demand via ProfileStorageManager.
         // Kept for backwards-compatibility during migration but not used by UI.
         public System.Collections.ObjectModel.ObservableCollection<AuditEntry> AuditHistory { get; set; } = new();

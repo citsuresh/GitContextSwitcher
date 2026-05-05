@@ -19,6 +19,68 @@ namespace GitContextSwitcher.UI.Views
             set => SetValue(HistoryCountBadgeProperty, value);
         }
 
+        private async Task OpenSaveContextDialogAsync()
+        {
+            try
+            {
+                if (_vm == null) return;
+                // Check pending changes before showing dialog
+                try
+                {
+                    if (_vm.PendingChangesCount == 0)
+                    {
+                        var owner = Window.GetWindow(this);
+                        if (!Dispatcher.CheckAccess())
+                        {
+                            Dispatcher.Invoke(() => System.Windows.MessageBox.Show(owner, "There are no pending changes to save.", "Save Current Context", MessageBoxButton.OK, MessageBoxImage.Warning));
+                        }
+                        else
+                        {
+                            System.Windows.MessageBox.Show(owner, "There are no pending changes to save.", "Save Current Context", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        }
+                        return;
+                    }
+                }
+                catch { }
+                var dlg = new SaveContextDialog { Owner = Window.GetWindow(this) };
+                var res = dlg.ShowDialog();
+                if (res == true)
+                {
+                    try
+                    {
+                        // Create lightweight SavedWorkContext entry in VM
+                        var sc = _vm.AddSavedWorkContext(dlg.Description);
+                        // Persist newly added context and show spinner overlay while saving
+                        bool ok = false;
+                        try
+                        {
+                            _vm.IsLoading = true;
+                            UpdateLoadingOverlay();
+                            // Manual saves from the UI should preserve the user's working tree: stash then reapply
+                            ok = await _vm.SaveContextAsync(sc, reapplyStash: true);
+                            if (!ok)
+                            {
+                                System.Windows.MessageBox.Show(Window.GetWindow(this), "Failed to save context. Check history for details.", "Save Current Context", MessageBoxButton.OK, MessageBoxImage.Error);
+                            }
+                        }
+                        finally
+                        {
+                            try { _vm.IsLoading = false; } catch { }
+                            UpdateLoadingOverlay();
+                        }
+
+                        // Refresh pending-files UI after successful save to reflect working-tree updates
+                        if (ok)
+                        {
+                            try { RebuildPendingFilesUI(); } catch { }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
         public ProfileTabControl()
         {
             InitializeComponent();
@@ -44,6 +106,22 @@ namespace GitContextSwitcher.UI.Views
                     }
                     catch { }
                 };
+                // Saved contexts expander handlers
+                SavedContextsExpander.Expanded += (s, e) =>
+                {
+                    try
+                    {
+                        if (DataContext is ViewModels.ProfileTabViewModel pvm)
+                        {
+                            // Ensure saved contexts are refreshed when expander opens
+                            pvm.RefreshSavedContextsCommand.Execute(null);
+                        }
+                    }
+                    catch { }
+                };
+                // Save context button is bound to the VM command in XAML (SaveContextCommand).
+                // The VM raises SaveContextRequested which this control listens for. Do not
+                // also handle the Click event here to avoid duplicate handling.
             }
             catch { }
         }
@@ -80,6 +158,9 @@ namespace GitContextSwitcher.UI.Views
             if (_vm != null)
             {
                 _vm.ProfileChanged -= Vm_ProfileChanged;
+                _vm.HistoryCountChanged -= Vm_HistoryCountChanged;
+                _vm.PropertyChanged -= Vm_PropertyChanged;
+                _vm.SaveContextRequested -= Vm_SaveContextRequested;
                 ViewModels.ProfileTabViewModel.HistoryLogEntryAdded -= ProfileTabControl_HistoryLogEntryAdded;
             }
 
@@ -93,6 +174,14 @@ namespace GitContextSwitcher.UI.Views
                     NotesExpander.IsExpanded = _vm.HasNotes;
                     PendingExpander.IsExpanded = _vm.HasPendingChanges;
                     HistoryExpander.IsExpanded = _vm.HasHistory;
+                    // Expand SavedContexts expander when there are saved contexts present; collapse when none
+                    try
+                    {
+                        // Ensure the VM's SavedContexts collection is populated from the profile
+                        try { _vm.RefreshSavedContextsCommand.Execute(null); } catch { }
+                        SavedContextsExpander.IsExpanded = (_vm.SavedContexts != null && _vm.SavedContexts.Any()) || (_vm.Profile?.SavedContexts != null && _vm.Profile.SavedContexts.Any());
+                    }
+                    catch { }
                 }
                 catch { }
                 // Listen for history count changed events from the VM so header badge updates after refresh
@@ -131,6 +220,16 @@ namespace GitContextSwitcher.UI.Views
                 // Watch IsLoading changes to show overlay
                 _vm.PropertyChanged += Vm_PropertyChanged;
                 UpdateLoadingOverlay();
+
+                // Wire SaveContextRequested to open dialog
+                _vm.SaveContextRequested += Vm_SaveContextRequested;
+
+                // Ensure pending changes are populated for this profile when DataContext changes
+                try
+                {
+                    RebuildPendingFilesUI();
+                }
+                catch { }
             }
 
             // Do not automatically load repo info on DataContext change; discovery is skipped for now
@@ -159,6 +258,38 @@ namespace GitContextSwitcher.UI.Views
             {
                 UpdateLoadingOverlay();
             }
+        }
+
+        private void Vm_SaveContextRequested(object? sender, EventArgs e)
+        {
+            try
+            {
+                if (_vm == null) return;
+
+                if (_vm.PendingChangesCount == 0)
+                {
+                    if (!Dispatcher.CheckAccess())
+                    {
+                        Dispatcher.Invoke(() =>
+                            System.Windows.MessageBox.Show(Window.GetWindow(this), "There are no pending changes to save.", "Save Current Context", MessageBoxButton.OK, MessageBoxImage.Warning));
+                    }
+                    else
+                    {
+                        System.Windows.MessageBox.Show(Window.GetWindow(this), "There are no pending changes to save.", "Save Current Context", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    return;
+                }
+
+                if (!Dispatcher.CheckAccess())
+                {
+                    Dispatcher.Invoke(() => _ = OpenSaveContextDialogAsync());
+                }
+                else
+                {
+                    _ = OpenSaveContextDialogAsync();
+                }
+            }
+            catch { }
         }
 
         private void UpdateLoadingOverlay()

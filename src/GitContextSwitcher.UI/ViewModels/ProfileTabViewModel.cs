@@ -1,6 +1,7 @@
 using GitContextSwitcher.Core.Models;
 using System.Linq;
 using GitContextSwitcher.UI.Services;
+using System.Threading;
 
 namespace GitContextSwitcher.UI.ViewModels
 {
@@ -13,6 +14,9 @@ namespace GitContextSwitcher.UI.ViewModels
         {
             public Guid ProfileId { get; set; }
         }
+
+        // Semaphore to prevent concurrent context saves for this profile
+        private readonly SemaphoreSlim _saveContextSemaphore = new SemaphoreSlim(1, 1);
 
         // Pending/coalesced audit entries (keyed by category) recorded while user edits before an actual save.
         private readonly System.Collections.Generic.Dictionary<string, (string? OldValue, string? NewValue, DateTime FirstSeen)> _pendingAudits
@@ -34,6 +38,228 @@ namespace GitContextSwitcher.UI.ViewModels
                 }
             }
             catch { }
+
+            // Initialize saved contexts collection from profile lightweight summaries
+            try
+            {
+                _savedContexts = new System.Collections.ObjectModel.ObservableCollection<SavedWorkContext>(Profile.SavedContexts ?? new System.Collections.Generic.List<SavedWorkContext>());
+            }
+            catch
+            {
+                _savedContexts = new System.Collections.ObjectModel.ObservableCollection<SavedWorkContext>();
+            }
+        }
+
+        private System.Collections.ObjectModel.ObservableCollection<SavedWorkContext> _savedContexts = new();
+        public System.Collections.ObjectModel.ObservableCollection<SavedWorkContext> SavedContexts => _savedContexts;
+
+        // Command and event to request opening a save-context dialog in the host view
+        public event EventHandler? SaveContextRequested;
+        private RelayCommand? _saveContextCommand;
+        public RelayCommand SaveContextCommand => _saveContextCommand ??= new RelayCommand(_ => {
+            try { SaveContextRequested?.Invoke(this, EventArgs.Empty); } catch { }
+        });
+
+        private RelayCommand? _refreshSavedContextsCommand;
+        public RelayCommand RefreshSavedContextsCommand => _refreshSavedContextsCommand ??= new RelayCommand(_ => {
+            try
+            {
+                _savedContexts.Clear();
+                if (Profile.SavedContexts != null)
+                {
+                    foreach (var sc in Profile.SavedContexts.OrderByDescending(s => s.CreatedAt))
+                        _savedContexts.Add(sc);
+                }
+            }
+            catch { }
+        });
+
+        // Create a lightweight SavedWorkContext and add it to the profile (does not create folder/files yet)
+        public SavedWorkContext AddSavedWorkContext(string? description)
+        {
+            var sc = new SavedWorkContext
+            {
+                Id = Guid.NewGuid(),
+                // FolderName deprecated; ensure FolderName mirrors Id for back-compat
+                FolderName = Guid.NewGuid().ToString(),
+                Description = description,
+                CreatedAt = DateTime.UtcNow,
+                FileCount = this.PendingChangesCount,
+                PatchFileName = null,
+                HeadBranch = RepoInfo?.CurrentBranch,
+                HeadShortSha = RepoInfo?.HeadShortSha
+            };
+
+            try
+            {
+                Profile.SavedContexts ??= new System.Collections.Generic.List<SavedWorkContext>();
+                Profile.SavedContexts.Insert(0, sc);
+                _savedContexts.Insert(0, sc);
+                // Add audit entry for the saved context creation. Do not raise ProfileChanged or
+                // set IsDirty here to avoid triggering the background save path which can race
+                // with the explicit SaveContextAsync flow. SaveContextAsync persists the profile
+                // and clears IsDirty when complete.
+                try { QueuePendingAudit("Saved context", null, description); } catch { }
+            }
+            catch { }
+
+            return sc;
+        }
+
+        // Orchestrate saving a full context: create folder, export files, create patch, create stash, write context.json, update profile and history.
+        public async Task<bool> SaveContextAsync(SavedWorkContext sc, bool reapplyStash = false, CancellationToken cancellationToken = default)
+        {
+            if (sc == null) return false;
+            // prevent concurrent saves
+            try
+            {
+                await _saveContextSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                AddHistory("SaveContextCancelled", "Save context operation was cancelled before start");
+                return false;
+            }
+            // Validate repo path
+            if (string.IsNullOrWhiteSpace(Profile.RepoPath) || !System.IO.Directory.Exists(Profile.RepoPath))
+            {
+                AddHistory("SaveContextFailed", "Repository path invalid or missing");
+                try { _saveContextSemaphore.Release(); } catch { }
+                return false;
+            }
+
+            var mgr = new ProfileStorageManager();
+            string? ctxFolder = null;
+            string? patchPath = null;
+            string? stashRef = null;
+            bool createdFolder = false;
+            try
+            {
+                // Create context folder
+                ctxFolder = await mgr.CreateContextFolderAsync(Profile.Id, sc.Id).ConfigureAwait(false);
+                createdFolder = true;
+
+                // Determine files to include: use current Profile.Files list
+                var files = Profile.Files?.Select(f => f.FilePath ?? string.Empty).Where(p => !string.IsNullOrWhiteSpace(p)).ToList() ?? new System.Collections.Generic.List<string>();
+
+                // Export files into a "files" subfolder for archival (untracked files included by copy)
+                var filesDest = System.IO.Path.Combine(ctxFolder, "files");
+                var exported = await Infrastructure.Services.GitExportHelper.ExportFilesAsync(Profile.RepoPath!, files, filesDest).ConfigureAwait(false);
+
+                // Create unified patch
+                patchPath = System.IO.Path.Combine(ctxFolder, "changes.patch");
+                var patchOk = await Infrastructure.Services.GitExportHelper.CreateUnifiedPatchAsync(Profile.RepoPath!, files, patchPath).ConfigureAwait(false);
+
+                // Create stash to capture current working tree (include untracked)
+                stashRef = await Infrastructure.Services.GitExportHelper.CreateStashAsync(Profile.RepoPath!, $"GCS: {sc.Description ?? "saved context"}", includeUntracked: true).ConfigureAwait(false);
+
+                // Optionally reapply the stash immediately so the user's working tree remains unchanged
+                if (!string.IsNullOrWhiteSpace(stashRef) && reapplyStash)
+                {
+                    try
+                    {
+                        var reapplied = await Infrastructure.Services.GitExportHelper.ApplyStashAsync(Profile.RepoPath!, stashRef).ConfigureAwait(false);
+                        if (reapplied)
+                        {
+                            AddHistory("StashReapplied", $"Reapplied stash {stashRef} after saving context '{sc.Description ?? string.Empty}'");
+                        }
+                        else
+                        {
+                            AddHistory("StashReapplyFailed", $"Failed to reapply stash {stashRef} after saving context '{sc.Description ?? string.Empty}'");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        try { AddHistory("StashReapplyFailed", ex.Message, ex); } catch { }
+                    }
+                }
+
+                // Update saved context metadata
+                sc.PatchFileName = System.IO.Path.GetFileName(patchPath);
+                sc.FileCount = exported;
+                sc.StashRef = stashRef;
+
+                // Write context metadata
+                await mgr.WriteContextMetadataAsync(Profile.Id, sc).ConfigureAwait(false);
+
+                // Persist updated profile (so summary is stored)
+                // Mark profile last modified
+                Profile.LastModifiedAt = DateTime.UtcNow;
+                Profile.SavedContexts ??= new System.Collections.Generic.List<SavedWorkContext>();
+                // Ensure sc is present in the list (might already be added)
+                if (!Profile.SavedContexts.Any(s => s.Id == sc.Id))
+                    Profile.SavedContexts.Insert(0, sc);
+
+                // Save profile file via storage manager (trimmed save)
+                await mgr.SaveProfileAsync(Profile).ConfigureAwait(false);
+
+                // Persist any pending/coalesced audit entries so history and profile are consistent
+                try
+                {
+                    await PersistPendingAuditsAsync().ConfigureAwait(false);
+                }
+                catch { }
+
+                // Also notify the configured IProfileStore to persist this profile through the shared path
+                try
+                {
+                    var store = App.Services.GetService(typeof(GitContextSwitcher.UI.Services.IProfileStore)) as GitContextSwitcher.UI.Services.IProfileStore;
+                    if (store != null)
+                    {
+                        // Save only this profile to ensure master index and any store-level invariants are updated
+                        await store.SaveAsync(new System.Collections.Generic.List<WorkProfile> { Profile }).ConfigureAwait(false);
+                    }
+                }
+                catch { }
+
+                // Profile has been persisted to disk; clear the dirty flag so the UI reflects saved state.
+                try
+                {
+                    var dsp = System.Windows.Application.Current?.Dispatcher;
+                    if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => { IsDirty = false; SaveStatus = "Saved"; });
+                    else { IsDirty = false; SaveStatus = "Saved"; }
+
+                    // Clear the transient saved status after a short delay
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await Task.Delay(2000).ConfigureAwait(false);
+                            var d = System.Windows.Application.Current?.Dispatcher;
+                            if (d != null)
+                                d.Invoke(() => SaveStatus = null);
+                            else
+                                SaveStatus = null;
+                        }
+                        catch { }
+                    });
+                }
+                catch { }
+
+                // Append history entry
+                AddHistory("SavedWorkContext", $"Saved context '{sc.Description ?? string.Empty}' files={sc.FileCount} stash={sc.StashRef}");
+
+                // Mark not dirty? Keep changes till user saves profile via normal flow; we'll mark IsDirty=false only after explicit save
+                return true;
+            }
+            catch (Exception ex)
+            {
+                try { AddHistory("SaveContextFailed", ex.Message + (stashRef != null ? $" (stash: {stashRef})" : string.Empty), ex); } catch { }
+                // Cleanup created folder if present
+                try
+                {
+                    if (createdFolder && ctxFolder != null)
+                        await mgr.DeleteContextFolderAsync(Profile.Id, sc).ConfigureAwait(false);
+                }
+                catch { }
+                try { _saveContextSemaphore.Release(); } catch { }
+                return false;
+            }
+            finally
+            {
+                // ensure semaphore released when operation completes successfully
+                try { _saveContextSemaphore.Release(); } catch { }
+            }
         }
 
         // Persist any pending/coalesced audits to the per-profile history file and raise HistoryLogEntryAdded.

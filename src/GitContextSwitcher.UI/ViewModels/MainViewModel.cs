@@ -305,9 +305,32 @@ namespace GitContextSwitcher.UI.ViewModels
 
         private void Child_ProfileChanged(object? sender, EventArgs e)
         {
-            // Persist on child change
-            // Persist on child change. Enqueue a background save which trims large collections and persists atomically.
-            EnqueueBackgroundSave();
+            // Persist on child change. Only enqueue a background save for user-initiated changes
+            // (marked by the ViewModel IsDirty flag) to avoid saving during incidental updates
+            // such as RefreshRepoInfoAsync which raises ProfileChanged for UI refresh.
+            try
+            {
+                if (sender is ProfileTabViewModel pvm)
+                {
+                    if (pvm.IsDirty)
+                    {
+                        EnqueueBackgroundSave();
+                    }
+                    else
+                    {
+                        // No-op: skip background save for non-dirty updates
+                    }
+                }
+                else
+                {
+                    EnqueueBackgroundSave();
+                }
+            }
+            catch
+            {
+                // Fall back to enqueueing a save if inspection fails
+                EnqueueBackgroundSave();
+            }
         }
 
         private readonly object _saveLock = new();
@@ -347,6 +370,8 @@ namespace GitContextSwitcher.UI.ViewModels
                                 PatchFilePath = wp.PatchFilePath,
                                 StashRef = wp.StashRef,
                                 Files = wp.Files?.TakeLast(50).ToList() ?? new List<Core.Models.ProfileFileEntry>(),
+                                    // Preserve saved contexts so created contexts are not lost by background trim
+                                    SavedContexts = wp.SavedContexts?.ToList() ?? new List<Core.Models.SavedWorkContext>(),
                                 // Persist only the most recent 50 history entries to keep profile JSON small
                                 AuditHistory = new System.Collections.ObjectModel.ObservableCollection<Core.Models.AuditEntry>(wp.AuditHistory?.OrderBy(a => a.Timestamp).TakeLast(50).ToList() ?? new List<Core.Models.AuditEntry>())
                             };
