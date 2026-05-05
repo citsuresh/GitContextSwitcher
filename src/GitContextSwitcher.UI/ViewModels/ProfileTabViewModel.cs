@@ -142,8 +142,9 @@ namespace GitContextSwitcher.UI.ViewModels
                 // Determine files to include: use current Profile.Files list
                 var files = Profile.Files?.Select(f => f.FilePath ?? string.Empty).Where(p => !string.IsNullOrWhiteSpace(p)).ToList() ?? new System.Collections.Generic.List<string>();
 
-                // Export files into a "files" subfolder for archival (untracked files included by copy)
-                var filesDest = System.IO.Path.Combine(ctxFolder, "files");
+                // Export files into a "WithHierarchy" subfolder for archival (untracked files included by copy)
+                // A sibling "Flat" folder will also be created by the exporter.
+                var filesDest = System.IO.Path.Combine(ctxFolder, "WithHierarchy");
                 var exported = await Infrastructure.Services.GitExportHelper.ExportFilesAsync(Profile.RepoPath!, files, filesDest).ConfigureAwait(false);
 
                 // Create unified patch
@@ -192,6 +193,56 @@ namespace GitContextSwitcher.UI.ViewModels
 
                 // Save profile file via storage manager (trimmed save)
                 await mgr.SaveProfileAsync(Profile).ConfigureAwait(false);
+
+                // Verify the profile was persisted and the saved context is present on disk.
+                try
+                {
+                    var persisted = await mgr.LoadProfileAsync(Profile.Id).ConfigureAwait(false);
+                    var found = persisted?.SavedContexts?.Any(s => s.Id == sc.Id) ?? false;
+                    if (!found)
+                    {
+                        // Attempt a best-effort secondary save via configured IProfileStore if available
+                        try
+                        {
+                            var store = App.Services.GetService(typeof(GitContextSwitcher.UI.Services.IProfileStore)) as GitContextSwitcher.UI.Services.IProfileStore;
+                            if (store != null)
+                            {
+                                await store.SaveAsync(new System.Collections.Generic.List<WorkProfile> { Profile }).ConfigureAwait(false);
+                                // reload
+                                persisted = await mgr.LoadProfileAsync(Profile.Id).ConfigureAwait(false);
+                                found = persisted?.SavedContexts?.Any(s => s.Id == sc.Id) ?? false;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            AddHistory("SaveContextPersistFallbackFailed", ex.Message, ex);
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        // If persistence verification fails, record history and surface failure to caller
+                        AddHistory("SaveContextPersistVerificationFailed", $"Saved context {sc.Id} not found after save");
+                        try
+                        {
+                            // Attempt cleanup to avoid stray context folders
+                            if (ctxFolder != null && System.IO.Directory.Exists(ctxFolder))
+                            {
+                                await mgr.DeleteContextFolderAsync(Profile.Id, sc).ConfigureAwait(false);
+                            }
+                        }
+                        catch { }
+
+                        try { _saveContextSemaphore.Release(); } catch { }
+                        return false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AddHistory("SaveContextPersistVerifyError", ex.Message, ex);
+                    try { _saveContextSemaphore.Release(); } catch { }
+                    return false;
+                }
 
                 // Persist any pending/coalesced audit entries so history and profile are consistent
                 try

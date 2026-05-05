@@ -111,11 +111,11 @@ namespace GitContextSwitcher.UI.Services
             catch { }
         }
 
-        // Create a per-context folder under the profile folder. Returns the full path.
+        // Create a per-saved-context folder under the profile folder. Returns the full path.
         public async Task<string> CreateContextFolderAsync(Guid profileId, Guid contextId)
         {
             var folder = AppPaths.GetProfileFolder(profileId);
-            var ctx = Path.Combine(folder, "contexts", contextId.ToString());
+            var ctx = Path.Combine(folder, "SavedContexts", contextId.ToString());
             try
             {
                 Directory.CreateDirectory(ctx);
@@ -130,9 +130,9 @@ namespace GitContextSwitcher.UI.Services
         {
             try
             {
-                // Persist metadata into the canonical context folder named by the context Id
+                // Persist metadata into the canonical saved-context folder named by the context Id
                 // (use context.Id to avoid divergence when callers set FolderName to a different value).
-                var ctxFolder = Path.Combine(AppPaths.GetProfileFolder(profileId), "contexts", context.Id.ToString());
+                var ctxFolder = Path.Combine(AppPaths.GetProfileFolder(profileId), "SavedContexts", context.Id.ToString());
                 Directory.CreateDirectory(ctxFolder);
                 var jf = Path.Combine(ctxFolder, "context.json");
                 using var st = File.Open(jf, FileMode.Create, FileAccess.Write, FileShare.None);
@@ -160,7 +160,7 @@ namespace GitContextSwitcher.UI.Services
             {
                 // Delete the canonical folder named by context Id. If FolderName was set differently
                 // previously, prefer the Id-based folder to avoid leaving a stray metadata-only folder.
-                var ctxFolder = Path.Combine(AppPaths.GetProfileFolder(profileId), "contexts", context.Id.ToString());
+                var ctxFolder = Path.Combine(AppPaths.GetProfileFolder(profileId), "SavedContexts", context.Id.ToString());
                 if (Directory.Exists(ctxFolder))
                 {
                     Directory.Delete(ctxFolder, recursive: true);

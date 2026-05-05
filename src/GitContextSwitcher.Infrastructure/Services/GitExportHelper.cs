@@ -125,12 +125,18 @@ namespace GitContextSwitcher.Infrastructure.Services
         }
 
         // Copy specified files from repo root to destFolder, preserving relative paths
+        // Additionally create a flat copy of all exported files in a sibling "Flat" folder next to destFolder.
         public static async Task<int> ExportFilesAsync(string repoRoot, IEnumerable<string> relativePaths, string destFolder)
         {
             try
             {
                 if (!Directory.Exists(repoRoot)) return 0;
+                // Ensure hierarchy destination exists
                 Directory.CreateDirectory(destFolder);
+                // Also create a flat sibling folder next to destFolder (e.g., if destFolder is <ctx>/files, flat will be <ctx>/Flat)
+                var parent = Path.GetDirectoryName(destFolder) ?? destFolder;
+                var flatFolder = Path.Combine(parent, "Flat");
+                Directory.CreateDirectory(flatFolder);
                 int copied = 0;
                 foreach (var rel in relativePaths.Distinct(StringComparer.OrdinalIgnoreCase))
                 {
@@ -142,6 +148,27 @@ namespace GitContextSwitcher.Infrastructure.Services
                         var ddir = Path.GetDirectoryName(dst);
                         if (!string.IsNullOrEmpty(ddir)) Directory.CreateDirectory(ddir);
                         File.Copy(src, dst, overwrite: true);
+                        // Also copy to flat folder. If a file with the same leaf name exists, disambiguate by appending a numeric suffix.
+                        try
+                        {
+                            var leaf = Path.GetFileName(rel) ?? "file";
+                            var flatDst = Path.Combine(flatFolder, leaf);
+                            if (File.Exists(flatDst))
+                            {
+                                var nameOnly = Path.GetFileNameWithoutExtension(leaf);
+                                var ext = Path.GetExtension(leaf);
+                                int idx = 1;
+                                string candidate;
+                                do
+                                {
+                                    candidate = Path.Combine(flatFolder, $"{nameOnly}_{idx}{ext}");
+                                    idx++;
+                                } while (File.Exists(candidate));
+                                flatDst = candidate;
+                            }
+                            File.Copy(src, flatDst, overwrite: false);
+                        }
+                        catch { }
                         copied++;
                     }
                     catch { }
