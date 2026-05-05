@@ -8,6 +8,86 @@ namespace GitContextSwitcher.UI.ViewModels
     {
         public WorkProfile Profile { get; }
         public event EventHandler? ProfileChanged;
+        // Raised when a history log entry is appended to storage for any profile.
+        public class HistoryLogEntryEventArgs : EventArgs
+        {
+            public Guid ProfileId { get; set; }
+        }
+
+        // Pending/coalesced audit entries (keyed by category) recorded while user edits before an actual save.
+        private readonly System.Collections.Generic.Dictionary<string, (string? OldValue, string? NewValue, DateTime FirstSeen)> _pendingAudits
+            = new System.Collections.Generic.Dictionary<string, (string?, string?, DateTime)>();
+
+        private void QueuePendingAudit(string key, string? oldValue, string? newValue)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(key)) return;
+                if (_pendingAudits.TryGetValue(key, out var existing))
+                {
+                    // Preserve original old value, update to latest new value
+                    _pendingAudits[key] = (existing.OldValue ?? oldValue, newValue, existing.FirstSeen);
+                }
+                else
+                {
+                    _pendingAudits[key] = (oldValue, newValue, DateTime.UtcNow);
+                }
+            }
+            catch { }
+        }
+
+        // Persist any pending/coalesced audits to the per-profile history file and raise HistoryLogEntryAdded.
+        public async Task PersistPendingAuditsAsync()
+        {
+            try
+            {
+                if (!_pendingAudits.Any()) return;
+                var toFlush = _pendingAudits.ToList();
+                _pendingAudits.Clear();
+                var mgr = new ProfileStorageManager();
+                foreach (var kv in toFlush)
+                {
+                    try
+                    {
+                        var key = kv.Key;
+                        var oldVal = kv.Value.OldValue;
+                        var newVal = kv.Value.NewValue;
+                        var entry = new Core.Models.AuditEntry
+                        {
+                            Timestamp = DateTime.UtcNow,
+                            Action = key,
+                            Notes = $"From '{oldVal ?? string.Empty}' to '{newVal ?? string.Empty}'",
+                            User = Environment.UserName
+                        };
+
+                        await mgr.AppendHistoryAsync(Profile.Id, entry).ConfigureAwait(false);
+
+                        // Update in-memory collections on UI thread and raise static event for hosts
+                        var dsp = System.Windows.Application.Current?.Dispatcher;
+                        void addLocal()
+                        {
+                            try
+                            {
+                                Profile.AuditHistory ??= new System.Collections.ObjectModel.ObservableCollection<Core.Models.AuditEntry>();
+                                Profile.AuditHistory.Add(entry);
+                                _historyEntries.Insert(0, entry); // keep newest at top for display
+                                // trim in-memory to cap if necessary
+                                while (_historyEntries.Count > 100) _historyEntries.RemoveAt(_historyEntries.Count - 1);
+                            }
+                            catch { }
+                        }
+
+                        if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(addLocal);
+                        else addLocal();
+
+                        try { HistoryLogEntryAdded?.Invoke(this, new HistoryLogEntryEventArgs { ProfileId = Profile.Id }); } catch { }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+        public static event EventHandler<HistoryLogEntryEventArgs>? HistoryLogEntryAdded;
         public event EventHandler<RepositoryPickRequestedEventArgs>? RequestRepositoryPick;
 
         // Event args for repository pick - include the selected path back from UI
@@ -37,6 +117,145 @@ namespace GitContextSwitcher.UI.ViewModels
         {
             Profile = profile;
             RebuildFileTree();
+            // Ensure AuditHistory collection exists and is observable
+            if (Profile.AuditHistory == null)
+            {
+                Profile.AuditHistory = new System.Collections.ObjectModel.ObservableCollection<Core.Models.AuditEntry>();
+            }
+            // Trim history to in-memory cap to avoid excessive memory usage
+            try
+            {
+                const int maxInMemory = 100;
+                if (Profile.AuditHistory.Count > maxInMemory)
+                {
+                    // keep the most recent entries (assume most recent are at the end or beginning?)
+                    // We will keep the last maxInMemory entries by Timestamp ordering
+                    var ordered = Profile.AuditHistory.OrderBy(a => a.Timestamp).ToList();
+                    var toKeep = ordered.Skip(Math.Max(0, ordered.Count - maxInMemory)).ToList();
+                    Profile.AuditHistory.Clear();
+                    foreach (var e in toKeep)
+                        Profile.AuditHistory.Add(e);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Add a profile history entry (in-memory capped). This method is safe to call from background threads.
+        /// </summary>
+        // Add a history entry and persist it immediately to the per-profile history file (history.ndjson).
+        // This method is safe to call from background threads and will perform a fire-and-forget append to disk.
+        public void AddHistory(string action, string? notes = null, Exception? error = null, string? user = null)
+        {
+            try
+            {
+                var entry = new Core.Models.AuditEntry
+                {
+                    Timestamp = DateTime.UtcNow,
+                    Action = action ?? string.Empty,
+                    Notes = notes,
+                    User = user ?? Environment.UserName,
+                    Error = error?.ToString()
+                };
+                // Persist immediately to per-profile history file. Fire-and-forget so callers don't block.
+                try
+                {
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var mgr = new ProfileStorageManager();
+                            await mgr.AppendHistoryAsync(Profile.Id, entry).ConfigureAwait(false);
+                            // Raise static event so hosts can refresh if they are showing this profile
+                            HistoryLogEntryAdded?.Invoke(this, new HistoryLogEntryEventArgs { ProfileId = Profile.Id });
+                        }
+                        catch (Exception ex)
+                        {
+                            try { System.Diagnostics.Debug.WriteLine($"AddHistory: failed to append history for {Profile.Id}: {ex}"); } catch { }
+                        }
+                    });
+                }
+                catch { }
+            }
+            catch { }
+        }
+
+        // Load history on-demand from storage manager. Populates Profile.AuditHistory with most recent entries (max 100).
+        private readonly System.Collections.ObjectModel.ObservableCollection<Core.Models.AuditEntry> _historyEntries = new();
+        public System.Collections.ObjectModel.ObservableCollection<Core.Models.AuditEntry> HistoryEntries => _historyEntries;
+
+        private int _historyCount;
+        public int HistoryCount
+        {
+            get => _historyCount;
+            set
+            {
+                if (SetProperty(ref _historyCount, value))
+                {
+                    OnPropertyChanged(nameof(HasHistory));
+                }
+            }
+        }
+
+        public bool HasHistory => HistoryCount > 0 || HistoryEntries.Any();
+
+        private bool _isHistoryLoading;
+        public bool IsHistoryLoading
+        {
+            get => _isHistoryLoading;
+            set => SetProperty(ref _isHistoryLoading, value);
+        }
+
+        // Raised after history is loaded or refreshed with the current persisted count
+        public event EventHandler<int>? HistoryCountChanged;
+
+        private RelayCommand? _refreshHistoryCommand;
+        public RelayCommand RefreshHistoryCommand => _refreshHistoryCommand ??= new RelayCommand(async _ => await LoadHistoryAsync());
+
+        // Load history on-demand from storage manager.
+        // Populates HistoryEntries with most recent entries (maxEntries) and does not keep a permanent in-memory copy beyond this collection.
+        public async Task LoadHistoryAsync(int maxEntries = 100)
+        {
+            try
+            {
+                // indicate loading in UI
+                try { IsHistoryLoading = true; } catch { }
+                var mgr = new ProfileStorageManager();
+                var list = await mgr.ReadHistoryTailAsync(Profile.Id, maxEntries).ConfigureAwait(false);
+                var dsp = System.Windows.Application.Current?.Dispatcher;
+                void assign()
+                {
+                    try
+                    {
+                        _historyEntries.Clear();
+                        foreach (var a in list)
+                        {
+                            _historyEntries.Add(a);
+                        }
+                    }
+                    catch { }
+                }
+
+                if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(assign);
+                else assign();
+                try { IsHistoryLoading = false; } catch { }
+
+                // Also update the persisted count and raise event so hosts (tab header) can refresh badge
+                try
+                {
+                    var cnt = await mgr.ReadHistoryCountAsync(Profile.Id).ConfigureAwait(false);
+                    // update VM property and raise event
+                    HistoryCount = cnt;
+                    try
+                    {
+                        if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => HistoryCountChanged?.Invoke(this, cnt));
+                        else HistoryCountChanged?.Invoke(this, cnt);
+                    }
+                    catch { }
+                }
+                catch { }
+            }
+            catch { }
         }
 
         // Tree representation of files in the profile for UI display
@@ -297,6 +516,13 @@ namespace GitContextSwitcher.UI.ViewModels
             set => SetProperty(ref _isLoading, value);
         }
 
+        private bool _isSaving;
+        public bool IsSaving
+        {
+            get => _isSaving;
+            set => SetProperty(ref _isSaving, value);
+        }
+
         private RelayCommand? _refreshRepoInfoCommand;
         public RelayCommand RefreshRepoInfoCommand => _refreshRepoInfoCommand ??= new RelayCommand(async _ => await RefreshRepoInfoAsync());
 
@@ -543,10 +769,37 @@ namespace GitContextSwitcher.UI.ViewModels
             RequestRepositoryPick?.Invoke(this, args);
             if (!string.IsNullOrWhiteSpace(args.SelectedPath) && args.SelectedPath != Profile.RepoPath)
             {
+                var old = Profile.RepoPath;
                 Profile.RepoPath = args.SelectedPath;
                 Profile.LastModifiedAt = DateTime.UtcNow;
                     OnPropertyChanged(nameof(RepoPath));
                     IsDirty = true;
+                    try
+                    {
+                        // Queue pending audit for repository pick; flush on save
+                        QueuePendingAudit("Repository picked", old, args.SelectedPath);
+                    OnPropertyChanged(nameof(HasPendingChanges));
+                    }
+                    catch { }
+                    // After picking a repository, refresh repo info and pending changes immediately
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await RefreshRepoInfoAsync().ConfigureAwait(false);
+                            // Rebuild UI tree on UI thread if needed
+                            var dsp = System.Windows.Application.Current?.Dispatcher;
+                            if (dsp != null)
+                            {
+                                dsp.Invoke(() => RebuildFileTree());
+                            }
+                            else
+                            {
+                                RebuildFileTree();
+                            }
+                        }
+                        catch { }
+                    });
             }
         });
 
@@ -560,6 +813,7 @@ namespace GitContextSwitcher.UI.ViewModels
 
         // Expose Notes for read-only display similar to Name; editing is via an explicit command
         public string? Notes => Profile.Notes;
+        public bool HasNotes => !string.IsNullOrWhiteSpace(Profile?.Notes);
         private bool _isOpen;
         public bool IsOpen
         {
@@ -631,10 +885,18 @@ namespace GitContextSwitcher.UI.ViewModels
         {
             if (TempNotes != Notes)
             {
+                var old = Notes;
                 Profile.Notes = TempNotes;
                 Profile.LastModifiedAt = DateTime.UtcNow;
                 OnPropertyChanged(nameof(Notes));
+                OnPropertyChanged(nameof(HasNotes));
                 IsDirty = true;
+                try
+                {
+                    // Queue pending audit for notes change; flush when saved
+                    QueuePendingAudit("Notes edited", old, TempNotes);
+                }
+                catch { }
             }
             IsEditingNotes = false;
             System.Windows.Input.CommandManager.InvalidateRequerySuggested();
@@ -644,10 +906,19 @@ namespace GitContextSwitcher.UI.ViewModels
         private RelayCommand? _saveCommand;
         public RelayCommand SaveCommand => _saveCommand ??= new RelayCommand(async _ => await SaveNowAsync());
 
-        private async Task SaveNowAsync()
+        // Exposed save method so callers (UI host) can await saves when prompting on navigation/close
+        public async Task SaveNowAsync()
         {
             try
             {
+                // Indicate saving in UI
+                try
+                {
+                    var dsp = System.Windows.Application.Current?.Dispatcher;
+                    if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => IsSaving = true);
+                    else IsSaving = true;
+                }
+                catch { IsSaving = true; }
                 // Show saving status on UI thread
                 try
                 {
@@ -695,6 +966,13 @@ namespace GitContextSwitcher.UI.ViewModels
 
                     // Save the merged list back to disk
                     await store.SaveAsync(existing).ConfigureAwait(false);
+
+                    // After a successful save, persist any pending/coalesced audit entries
+                    try
+                    {
+                        await PersistPendingAuditsAsync().ConfigureAwait(false);
+                    }
+                    catch { }
 
                     // On success, clear dirty flag and show transient saved status
                     try
@@ -748,6 +1026,17 @@ namespace GitContextSwitcher.UI.ViewModels
                 }
                 catch { }
             }
+            finally
+            {
+                // Clear saving UI flag
+                try
+                {
+                    var dsp = System.Windows.Application.Current?.Dispatcher;
+                    if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => IsSaving = false);
+                    else IsSaving = false;
+                }
+                catch { IsSaving = false; }
+            }
         }
 
         private RelayCommand? _cancelEditNotesCommand;
@@ -765,7 +1054,14 @@ namespace GitContextSwitcher.UI.ViewModels
             {
                 if (!string.IsNullOrWhiteSpace(TempName) && TempName != Name)
                 {
+                    var old = Name;
                     Name = TempName!;
+                    try
+                    {
+                        // Record rename in history immediately so users see the action
+                        AddHistory("Renamed profile", $"From '{old}' to '{TempName}'");
+                    }
+                    catch { }
                 }
             }
             IsEditingName = false;

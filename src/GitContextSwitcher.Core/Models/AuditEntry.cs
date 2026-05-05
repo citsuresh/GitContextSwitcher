@@ -6,4 +6,6 @@ public class AuditEntry
     public string Action { get; set; } = string.Empty;
     public string? Notes { get; set; }
     public string? User { get; set; }
+    // Optional: include exception details if the audit entry records an error
+    public string? Error { get; set; }
 }

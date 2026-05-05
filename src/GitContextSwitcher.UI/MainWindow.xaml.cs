@@ -16,6 +16,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using System.Windows.Media.Animation;
+using System.ComponentModel;
 
 namespace GitContextSwitcher.UI
 {
@@ -24,6 +25,8 @@ namespace GitContextSwitcher.UI
     /// </summary>
     public partial class MainWindow : Window
     {
+        private ViewModels.ProfileTabViewModel? _lastSelectedProfile;
+        private bool _suppressSelectionPrompt;
         // DependencyProperty used as an animation target; when animated, it will update the ScrollViewer offset
         public static readonly DependencyProperty AnimatedHorizontalOffsetProperty = DependencyProperty.Register(
             nameof(AnimatedHorizontalOffset), typeof(double), typeof(MainWindow),
@@ -50,7 +53,15 @@ namespace GitContextSwitcher.UI
         {
             InitializeComponent();
             DataContext = App.Services.GetRequiredService<ViewModels.MainViewModel>();
+            // Track last selected profile to prompt on navigation
+            if (DataContext is ViewModels.MainViewModel mm)
+            {
+                _lastSelectedProfile = mm.SelectedProfile;
+            }
             ProfileTabs.SelectionChanged += ProfileTabs_SelectionChanged;
+
+            // Prompt on window close if current profile is dirty
+            this.Closing += MainWindow_Closing;
 
             Loaded += MainWindow_Loaded;
             SizeChanged += MainWindow_SizeChanged;
@@ -79,6 +90,84 @@ namespace GitContextSwitcher.UI
 
         private void ProfileTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            // If this change was caused by programmatic restore, skip prompting once
+            try
+            {
+                if (_suppressSelectionPrompt)
+                {
+                    _suppressSelectionPrompt = false;
+                    // Still update last selected to the current selected item and exit
+                    try { if (ProfileTabs.SelectedItem is ViewModels.ProfileTabViewModel cur1) _lastSelectedProfile = cur1; } catch { }
+                    return;
+                }
+            }
+            catch { }
+
+            // Determine intended new and previous selections from the event args when possible
+            ViewModels.ProfileTabViewModel? newSelection = null;
+            ViewModels.ProfileTabViewModel? prevSelection = null;
+            try
+            {
+                newSelection = e.AddedItems.OfType<ViewModels.ProfileTabViewModel>().FirstOrDefault() ?? (ProfileTabs.SelectedItem as ViewModels.ProfileTabViewModel);
+                prevSelection = e.RemovedItems.OfType<ViewModels.ProfileTabViewModel>().FirstOrDefault() ?? _lastSelectedProfile;
+            }
+            catch { newSelection = ProfileTabs.SelectedItem as ViewModels.ProfileTabViewModel; prevSelection = _lastSelectedProfile; }
+
+            // If nothing meaningful changed, skip processing
+            try
+            {
+                if (ReferenceEquals(newSelection, prevSelection))
+                {
+                    // Update last selected and exit
+                    if (newSelection != null) _lastSelectedProfile = newSelection;
+                    return;
+                }
+            }
+            catch { }
+
+            // When changing selection, if the previous selected profile was dirty, prompt to save
+            try
+            {
+                if (prevSelection != null && prevSelection.IsDirty)
+                {
+                    var res = WpfMessageBox.Show(this, $"Profile '{prevSelection.Name}' has unsaved changes. Save before switching?", "Unsaved Profile", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+                    if (res == MessageBoxResult.Cancel)
+                    {
+                        // Cancel selection change by restoring previous selection programmatically
+                        if (DataContext is ViewModels.MainViewModel mainVm)
+                        {
+                            try
+                            {
+                                _suppressSelectionPrompt = true;
+                                mainVm.SelectedProfile = prevSelection;
+                            }
+                            finally
+                            {
+                                // suppression cleared on next handler entry
+                            }
+                        }
+                        return;
+                    }
+
+                    if (res == MessageBoxResult.Yes)
+                    {
+                        // Attempt to save and wait briefly
+                        try
+                        {
+                            var vm = prevSelection;
+                            if (vm != null)
+                            {
+                                var saveTask = vm.SaveNowAsync();
+                                saveTask.Wait(3000);
+                            }
+                        }
+                        catch { }
+                    }
+                    // If 'No', continue and allow selection to change
+                }
+            }
+            catch { }
+
             // When selection changes, ensure the newly selected tab's control triggers lazy load
             void TryTriggerEnsure()
             {
@@ -105,6 +194,43 @@ namespace GitContextSwitcher.UI
             }
 
             TryTriggerEnsure();
+
+            // Update last selected to current selection
+            try
+            {
+                if (ProfileTabs.SelectedItem is ViewModels.ProfileTabViewModel cur)
+                {
+                    _lastSelectedProfile = cur;
+                }
+            }
+            catch { }
+        }
+
+        private void MainWindow_Closing(object? sender, CancelEventArgs e)
+        {
+            try
+            {
+                if (DataContext is ViewModels.MainViewModel mm && mm.SelectedProfile != null && mm.SelectedProfile.IsDirty)
+                {
+                    var res = WpfMessageBox.Show(this, $"Profile '{mm.SelectedProfile.Name}' has unsaved changes. Save before exit?", "Unsaved Profile", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+                    if (res == MessageBoxResult.Cancel)
+                    {
+                        e.Cancel = true;
+                        return;
+                    }
+
+                    if (res == MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            var saveTask = mm.SelectedProfile.SaveNowAsync();
+                            saveTask.Wait(5000);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
         }
 
         private void ExitMenu_Click(object sender, RoutedEventArgs e)
@@ -178,6 +304,10 @@ namespace GitContextSwitcher.UI
 
             // Create profile for selected repo
             var newProfile = vm.AddProfileForRepo(selectedPath);
+
+            // If needed, subscribe to pick requests and track last selected
+            newProfile.RequestRepositoryPick += Profile_RequestRepositoryPick;
+            _lastSelectedProfile = newProfile;
 
             // Persist will be handled later; show created profile
         }

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using GitContextSwitcher.UI.Services;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using Key = System.Windows.Input.Key;
 
@@ -9,6 +10,14 @@ namespace GitContextSwitcher.UI.Views
     {
         private ViewModels.ProfileTabViewModel? _vm;
         private string? _repoName;
+        public static readonly DependencyProperty HistoryCountBadgeProperty = DependencyProperty.Register(
+            nameof(HistoryCountBadge), typeof(int), typeof(ProfileTabControl), new PropertyMetadata(0));
+
+        public int HistoryCountBadge
+        {
+            get => (int)GetValue(HistoryCountBadgeProperty);
+            set => SetValue(HistoryCountBadgeProperty, value);
+        }
 
         public ProfileTabControl()
         {
@@ -22,6 +31,19 @@ namespace GitContextSwitcher.UI.Views
             {
                 RepoExpander.Collapsed += RepoExpander_Collapsed;
                 RepoExpander.Expanded += RepoExpander_Expanded;
+                // History expander - load history on demand
+                HistoryExpander.Expanded += async (s, e) =>
+                {
+                    try
+                    {
+                        // Keep loading history on expand (intentional no-op behavior).
+                        if (DataContext is ViewModels.ProfileTabViewModel pvm)
+                        {
+                            await pvm.LoadHistoryAsync().ConfigureAwait(false);
+                        }
+                    }
+                    catch { }
+                };
             }
             catch { }
         }
@@ -58,12 +80,54 @@ namespace GitContextSwitcher.UI.Views
             if (_vm != null)
             {
                 _vm.ProfileChanged -= Vm_ProfileChanged;
+                ViewModels.ProfileTabViewModel.HistoryLogEntryAdded -= ProfileTabControl_HistoryLogEntryAdded;
             }
 
             _vm = DataContext as ViewModels.ProfileTabViewModel;
             if (_vm != null)
             {
                 _vm.ProfileChanged += Vm_ProfileChanged;
+                // Set initial expanded state for sections based on content
+                try
+                {
+                    NotesExpander.IsExpanded = _vm.HasNotes;
+                    PendingExpander.IsExpanded = _vm.HasPendingChanges;
+                    HistoryExpander.IsExpanded = _vm.HasHistory;
+                }
+                catch { }
+                // Listen for history count changed events from the VM so header badge updates after refresh
+                _vm.HistoryCountChanged += Vm_HistoryCountChanged;
+                // Subscribe to static history-added event so active tab can refresh its history view
+                ViewModels.ProfileTabViewModel.HistoryLogEntryAdded += ProfileTabControl_HistoryLogEntryAdded;
+                // Also update the history count badge by reading persisted count (fire-and-forget)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var mgr = new ProfileStorageManager();
+                        var cnt = await mgr.ReadHistoryCountAsync(_vm.Profile.Id).ConfigureAwait(false);
+                        var dsp = System.Windows.Application.Current?.Dispatcher;
+                        if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() =>
+                        {
+                            HistoryCountBadge = cnt;
+                            try { _vm.HistoryCount = cnt; } catch { }
+                            if (cnt > 0)
+                            {
+                                try { HistoryExpander.IsExpanded = true; } catch { }
+                            }
+                        });
+                        else
+                        {
+                            HistoryCountBadge = cnt;
+                            try { _vm.HistoryCount = cnt; } catch { }
+                            if (cnt > 0)
+                            {
+                                try { HistoryExpander.IsExpanded = true; } catch { }
+                            }
+                        }
+                    }
+                    catch { }
+                });
                 // Watch IsLoading changes to show overlay
                 _vm.PropertyChanged += Vm_PropertyChanged;
                 UpdateLoadingOverlay();
@@ -71,6 +135,22 @@ namespace GitContextSwitcher.UI.Views
 
             // Do not automatically load repo info on DataContext change; discovery is skipped for now
             // _ = EnsureRepoInfoLoadedAsync();
+        }
+
+        private void ProfileTabControl_HistoryLogEntryAdded(object? sender, ViewModels.ProfileTabViewModel.HistoryLogEntryEventArgs e)
+        {
+            try
+            {
+                // If this control is showing the profile whose history was added and the history expander is open, reload
+                if (_vm != null && _vm.Profile != null && _vm.Profile.Id == e.ProfileId)
+                {
+                    if (HistoryExpander.IsExpanded)
+                    {
+                        _ = _vm.LoadHistoryAsync();
+                    }
+                }
+            }
+            catch { }
         }
 
         private void Vm_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -99,6 +179,31 @@ namespace GitContextSwitcher.UI.Views
                 else
                 {
                     LoadingOverlay.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch { }
+        }
+
+        private void Vm_HistoryCountChanged(object? sender, int e)
+        {
+            try
+            {
+                var dsp = System.Windows.Application.Current?.Dispatcher;
+                if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() =>
+                {
+                    HistoryCountBadge = e;
+                    if (e > 0)
+                    {
+                        try { HistoryExpander.IsExpanded = true; } catch { }
+                    }
+                });
+                else
+                {
+                    HistoryCountBadge = e;
+                    if (e > 0)
+                    {
+                        try { HistoryExpander.IsExpanded = true; } catch { }
+                    }
                 }
             }
             catch { }
@@ -315,23 +420,25 @@ namespace GitContextSwitcher.UI.Views
         {
             try
             {
-                if (_vm == null) return;
+                // Capture vm locally to avoid race where _vm becomes null while async work runs
+                var vm = _vm;
+                if (vm == null) return;
                 // Show loading overlay while files are rebuilt
-                _vm.IsLoading = true;
+                vm.IsLoading = true;
                 // Fire-and-forget: allow async file list build to run and update tree when done
                 Dispatcher.BeginInvoke(async () =>
                 {
                     try
                     {
                         // If VM has a RefreshRepoInfoCommand, call it to ensure files are fetched
-                        if (_vm.RefreshRepoInfoCommand.CanExecute(null))
+                        if (vm.RefreshRepoInfoCommand != null && vm.RefreshRepoInfoCommand.CanExecute(null))
                         {
-                            await _vm.RefreshRepoInfoAsync();
+                            await vm.RefreshRepoInfoAsync();
                         }
                         else
                         {
                             // Otherwise just rebuild the existing tree
-                            _vm.RebuildFileTree();
+                            vm.RebuildFileTree();
                         }
 
                         // Expand tree items after rebuild
@@ -340,7 +447,7 @@ namespace GitContextSwitcher.UI.Views
                     catch { }
                     finally
                     {
-                        try { _vm.IsLoading = false; } catch { }
+                        try { vm.IsLoading = false; } catch { }
                     }
                 });
             }

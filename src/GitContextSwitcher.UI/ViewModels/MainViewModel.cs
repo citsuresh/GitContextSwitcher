@@ -188,7 +188,8 @@ namespace GitContextSwitcher.UI.ViewModels
             SelectedProfile = vm;
             OnPropertyChanged(nameof(OpenProfiles));
             OnPropertyChanged(nameof(CanCloseAny));
-            _store.SaveAsync(Profiles.Select(p => p.Profile).ToList()).ConfigureAwait(false);
+            // Persist changes via background save to avoid creating temporary folders immediately
+            EnqueueBackgroundSave();
             return vm;
         }
 
@@ -230,7 +231,8 @@ namespace GitContextSwitcher.UI.ViewModels
             SelectedProfile = vm;
             OnPropertyChanged(nameof(OpenProfiles));
             OnPropertyChanged(nameof(CanCloseAny));
-            _store.SaveAsync(Profiles.Select(p => p.Profile).ToList()).ConfigureAwait(false);
+            // Persist via background save instead of immediate disk write to avoid temporary folder creation
+            EnqueueBackgroundSave();
         }
 
         public void AddProfile()
@@ -335,6 +337,8 @@ namespace GitContextSwitcher.UI.ViewModels
                             // Trim Files and AuditHistory to last 50 entries to limit file size
                             var clone = new Core.Models.WorkProfile
                             {
+                                // Preserve the original stable Id so saves merge correctly and do not create duplicates
+                                Id = wp.Id,
                                 Name = wp.Name,
                                 RepoPath = wp.RepoPath,
                                 Notes = wp.Notes,
@@ -343,7 +347,8 @@ namespace GitContextSwitcher.UI.ViewModels
                                 PatchFilePath = wp.PatchFilePath,
                                 StashRef = wp.StashRef,
                                 Files = wp.Files?.TakeLast(50).ToList() ?? new List<Core.Models.ProfileFileEntry>(),
-                                AuditHistory = wp.AuditHistory?.TakeLast(50).ToList() ?? new List<Core.Models.AuditEntry>()
+                                // Persist only the most recent 50 history entries to keep profile JSON small
+                                AuditHistory = new System.Collections.ObjectModel.ObservableCollection<Core.Models.AuditEntry>(wp.AuditHistory?.OrderBy(a => a.Timestamp).TakeLast(50).ToList() ?? new List<Core.Models.AuditEntry>())
                             };
                             return clone;
                         }).ToList();

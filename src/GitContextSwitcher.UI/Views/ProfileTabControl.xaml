@@ -6,7 +6,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:GitContextSwitcher.UI.Views;assembly=GitContextSwitcher.UI"
              mc:Ignorable="d"
-             d:DesignHeight="200" d:DesignWidth="400">
+             d:DesignHeight="600" d:DesignWidth="800">
     <UserControl.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
@@ -54,6 +54,7 @@
                                 </Canvas>
                             </Viewbox>
                         </Border>
+            <!-- History expander was moved here in code; it will be rendered inside the scroll content below. -->
                     </StackPanel>
 
                     <!-- Inline edit view -->
@@ -73,7 +74,32 @@
             </Grid>
 
             <!-- Inline save status (errors or transient messages) -->
-            <TextBlock Text="{Binding SaveStatus}" Foreground="DarkRed" FontSize="12" Margin="0,4,0,0" />
+            <Grid Margin="0,4,0,0">
+                <TextBlock Text="{Binding SaveStatus}" Foreground="DarkRed" FontSize="12" Visibility="{Binding SaveStatus, Converter={StaticResource StringToVisibilityConverter}}" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Border Width="16" Height="16" Margin="6,0,0,0" Visibility="{Binding IsSaving, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <Viewbox Stretch="Uniform">
+                            <Canvas Width="16" Height="16">
+                                <Ellipse Width="12" Height="12" Stroke="Gray" StrokeThickness="2" Opacity="0.3" Canvas.Left="2" Canvas.Top="2" />
+                                <Path Data="M8,2 A6,6 0 1 1 7.99,2" Stroke="DodgerBlue" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
+                                    <Path.RenderTransform>
+                                        <RotateTransform Angle="0" />
+                                    </Path.RenderTransform>
+                                    <Path.Triggers>
+                                        <EventTrigger RoutedEvent="Loaded">
+                                            <BeginStoryboard>
+                                                <Storyboard RepeatBehavior="Forever">
+                                                    <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)" From="0" To="360" Duration="0:0:1" />
+                                                </Storyboard>
+                                            </BeginStoryboard>
+                                        </EventTrigger>
+                                    </Path.Triggers>
+                                </Path>
+                            </Canvas>
+                        </Viewbox>
+                    </Border>
+                </StackPanel>
+            </Grid>
 
             <!-- Repository path and pick button -->
             <Grid Margin="0,6,0,0">
@@ -98,8 +124,10 @@
                 </Border>
             </Expander>
 
+            <!-- History expander moved to end of the content (rendered after pending changes) -->
+
             <!-- Notes section shown below repository details as an expander -->
-            <Expander x:Name="NotesExpander" IsExpanded="True" Margin="0,2,0,4">
+            <Expander x:Name="NotesExpander" Margin="0,2,0,4">
                 <Expander.Header>
                     <TextBlock Text="Notes" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
                 </Expander.Header>
@@ -140,7 +168,7 @@
             </Expander>
 
             <!-- Pending changes tree view as an expander (expanded by default) -->
-            <Expander x:Name="PendingExpander" IsExpanded="True" Margin="0,8,0,4">
+            <Expander x:Name="PendingExpander" Margin="0,8,0,4">
                 <Expander.Header>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <!-- Folder icon rendered as a vector for crisp DPI scaling -->
@@ -241,6 +269,96 @@
                 </Border>
             </Expander>
             <!-- Files placeholder removed per request -->
+
+            <!-- History expander: placed at bottom of the profile content -->
+            <Expander x:Name="HistoryExpander" Margin="0,4,0,2">
+                <Expander.Header>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="History" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" />
+                        <Border Style="{StaticResource CountBadgeStyle}" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding HistoryCountBadge, RelativeSource={RelativeSource AncestorType=UserControl}}" Style="{StaticResource CountBadgeTextStyle}" />
+                        </Border>
+                    </StackPanel>
+                </Expander.Header>
+
+                <Border Padding="4" Background="#FFF" BorderThickness="1" Margin="0,0,0,4">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="20" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Orientation="Horizontal" Grid.Row="0" HorizontalAlignment="Right">
+                            <Button Command="{Binding RefreshHistoryCommand}" Style="{StaticResource InlineIconButtonStyle}" Width="28" Height="20" Margin="0,-2,0,0" ToolTip="Refresh history">
+                                <TextBlock Text="⟳" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,-8,0,0" />
+                            </Button>
+                        </StackPanel>
+
+                        <Grid Grid.Row="1">
+                            <!-- Display history entries in a compact DataGrid for easier scanning and copy/paste -->
+                            <DataGrid ItemsSource="{Binding HistoryEntries}"
+                                      AutoGenerateColumns="False"
+                                      IsReadOnly="True"
+                                      CanUserAddRows="False"
+                                      CanUserDeleteRows="False"
+                                      HeadersVisibility="Column"
+                                      SelectionMode="Single"
+                                      RowHeaderWidth="0"
+                                      MinHeight="80"
+                                      Margin="0"
+                                      VerticalAlignment="Top">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Timestamp" Binding="{Binding Timestamp, StringFormat={}{0:G}}" Width="180" MinWidth="140" />
+                                    <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="160" MinWidth="120" />
+                                    <DataGridTemplateColumn Header="Notes" Width="*" MinWidth="240">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Notes}" TextWrapping="Wrap" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="User" Binding="{Binding User}" Width="140" MinWidth="100" />
+                                    <DataGridTemplateColumn Header="Error" Width="220" MinWidth="140">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Error}" Foreground="DarkRed" TextWrapping="Wrap" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <!-- Overlay while history is loading -->
+                            <Border Background="#80FFFFFF" Visibility="{Binding IsHistoryLoading, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Viewbox Width="32" Height="32">
+                                            <Canvas Width="32" Height="32">
+                                                <Ellipse Width="24" Height="24" Stroke="Gray" StrokeThickness="2" Opacity="0.3" Canvas.Left="4" Canvas.Top="4" />
+                                                <Path Data="M16,4 A12,12 0 1 1 15.99,4" Stroke="DodgerBlue" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
+                                                    <Path.RenderTransform>
+                                                        <RotateTransform Angle="0" />
+                                                    </Path.RenderTransform>
+                                                    <Path.Triggers>
+                                                        <EventTrigger RoutedEvent="Loaded">
+                                                            <BeginStoryboard>
+                                                                <Storyboard RepeatBehavior="Forever">
+                                                                    <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)" From="0" To="360" Duration="0:0:1" />
+                                                                </Storyboard>
+                                                            </BeginStoryboard>
+                                                        </EventTrigger>
+                                                    </Path.Triggers>
+                                                </Path>
+                                            </Canvas>
+                                        </Viewbox>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+            </Expander>
                 </StackPanel>
             </ScrollViewer>
 

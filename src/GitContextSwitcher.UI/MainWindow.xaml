@@ -153,6 +153,28 @@
                                         </Canvas>
                                     </Viewbox>
                                 </Border>
+                            <!-- Small save spinner shown when profile IsSaving is true -->
+                            <Border Width="12" Height="12" Margin="4,4,0,0" Visibility="{Binding IsSaving, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <Viewbox Stretch="Uniform">
+                                    <Canvas Width="12" Height="12">
+                                        <Ellipse Width="10" Height="10" Stroke="Gray" StrokeThickness="1.5" Opacity="0.3" Canvas.Left="1" Canvas.Top="1" />
+                                        <Path Data="M6,1 A5,5 0 1 1 5.99,1" Stroke="ForestGreen" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
+                                            <Path.RenderTransform>
+                                                <RotateTransform Angle="0" />
+                                            </Path.RenderTransform>
+                                            <Path.Triggers>
+                                                <EventTrigger RoutedEvent="Loaded">
+                                                    <BeginStoryboard>
+                                                        <Storyboard RepeatBehavior="Forever">
+                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)" From="0" To="360" Duration="0:0:1" />
+                                                        </Storyboard>
+                                                    </BeginStoryboard>
+                                                </EventTrigger>
+                                            </Path.Triggers>
+                                        </Path>
+                                    </Canvas>
+                                </Viewbox>
+                            </Border>
                             </StackPanel>
                             <TextBlock Text="{Binding RepoPath}" Margin="6,0,8,2" FontSize="11" Foreground="Gray" TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
