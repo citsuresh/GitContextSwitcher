@@ -19,6 +19,46 @@ namespace GitContextSwitcher.UI.Views
             set => SetValue(HistoryCountBadgeProperty, value);
         }
 
+        private void OpenContextFolderButton_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_vm == null) return;
+                var grid = this.FindName("SavedContextsGrid") as System.Windows.Controls.DataGrid;
+                if (grid?.SelectedItem is GitContextSwitcher.Core.Models.SavedWorkContext sc)
+                {
+                    try
+                    {
+                        var folder = System.IO.Path.Combine(AppPaths.GetProfileFolder(_vm.Profile.Id), "SavedContexts", sc.Id.ToString());
+                        if (System.IO.Directory.Exists(folder))
+                        {
+                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                            {
+                                FileName = folder,
+                                UseShellExecute = true,
+                                Verb = "open"
+                            });
+                        }
+                        else
+                        {
+                            // Show message that folder is missing
+                            var owner = Window.GetWindow(this);
+                            if (!Dispatcher.CheckAccess())
+                            {
+                                Dispatcher.Invoke(() => System.Windows.MessageBox.Show(owner, "Context folder is missing.", "Open Context Folder", MessageBoxButton.OK, MessageBoxImage.Warning));
+                            }
+                            else
+                            {
+                                System.Windows.MessageBox.Show(owner, "Context folder is missing.", "Open Context Folder", MessageBoxButton.OK, MessageBoxImage.Warning);
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
         private async Task OpenSaveContextDialogAsync()
         {
             try
@@ -156,6 +196,16 @@ namespace GitContextSwitcher.UI.Views
                     }
                 }
                 catch { }
+                // Hook up open-folder button handler
+                try
+                {
+                    var openObj = this.FindName("OpenContextFolderButton");
+                    if (openObj is UIElement openUi)
+                    {
+                        openUi.AddHandler(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, new RoutedEventHandler(OpenContextFolderButton_Click));
+                    }
+                }
+                catch { }
             // Wire up selection changed handler on the saved contexts DataGrid so delete button enabled state updates
             try
             {
@@ -171,6 +221,11 @@ namespace GitContextSwitcher.UI.Views
                             {
                                 delBtn.IsEnabled = dg.SelectedItem != null;
                             }
+                            var openObj2 = this.FindName("OpenContextFolderButton");
+                            if (openObj2 is System.Windows.Controls.Button openBtn)
+                            {
+                                openBtn.IsEnabled = dg.SelectedItem != null;
+                            }
                         }
                         catch { }
                     };
@@ -182,6 +237,11 @@ namespace GitContextSwitcher.UI.Views
                         if (delObj2 is System.Windows.Controls.Button delBtn)
                         {
                             delBtn.IsEnabled = dg.SelectedItem != null;
+                        }
+                        var openObj2 = this.FindName("OpenContextFolderButton");
+                        if (openObj2 is System.Windows.Controls.Button openBtn)
+                        {
+                            openBtn.IsEnabled = dg.SelectedItem != null;
                         }
                     }
                     catch { }
