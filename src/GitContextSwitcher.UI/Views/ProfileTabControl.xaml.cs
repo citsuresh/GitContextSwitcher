@@ -325,6 +325,15 @@ namespace GitContextSwitcher.UI.Views
                                         else _vm.RefreshSavedContextsCommand.Execute(null);
                                     }
                                 }
+
+                                // Show transient notification for successful delete/remove
+                                try
+                                {
+                                    var msg = sc.IsFolderMissing ? "Removed saved context metadata." : "Deleted saved context.";
+                                    if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => _vm.ShowNotification(msg, "Success", 4000));
+                                    else _vm.ShowNotification(msg, "Success", 4000);
+                                }
+                                catch { }
                             }
                             catch { }
                         }

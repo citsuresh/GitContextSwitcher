@@ -211,6 +211,78 @@ namespace GitContextSwitcher.UI.ViewModels
             set => SetProperty(ref _isSavedContextsLoading, value);
         }
 
+        // Lightweight notification/status area properties
+        private string? _notificationMessage;
+        public string? NotificationMessage
+        {
+            get => _notificationMessage;
+            set => SetProperty(ref _notificationMessage, value);
+        }
+
+        private string _notificationSeverity = "Info"; // Info, Success, Warning, Error
+        public string NotificationSeverity
+        {
+            get => _notificationSeverity;
+            set => SetProperty(ref _notificationSeverity, value);
+        }
+
+        private bool _isNotificationVisible;
+        public bool IsNotificationVisible
+        {
+            get => _isNotificationVisible;
+            set => SetProperty(ref _isNotificationVisible, value);
+        }
+
+        private System.Threading.CancellationTokenSource? _notificationCts;
+
+        private RelayCommand? _clearNotificationCommand;
+        public RelayCommand ClearNotificationCommand => _clearNotificationCommand ??= new RelayCommand(_ => {
+            try { ClearNotification(); } catch { }
+        });
+
+        public void ShowNotification(string message, string severity = "Info", int durationMs = 5000)
+        {
+            try
+            {
+                // Cancel any previous auto-clear
+                _notificationCts?.Cancel();
+                _notificationCts = new System.Threading.CancellationTokenSource();
+                var ct = _notificationCts.Token;
+
+                NotificationMessage = message;
+                NotificationSeverity = string.IsNullOrWhiteSpace(severity) ? "Info" : severity;
+                IsNotificationVisible = true;
+
+                // Auto-clear after duration
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(durationMs, ct).ConfigureAwait(false);
+                        if (ct.IsCancellationRequested) return;
+                        // Clear on UI thread
+                        var dsp = System.Windows.Application.Current?.Dispatcher;
+                        if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => ClearNotification());
+                        else ClearNotification();
+                    }
+                    catch { }
+                }, ct);
+            }
+            catch { }
+        }
+
+        public void ClearNotification()
+        {
+            try
+            {
+                _notificationCts?.Cancel();
+            }
+            catch { }
+            NotificationMessage = null;
+            NotificationSeverity = "Info";
+            IsNotificationVisible = false;
+        }
+
         public async Task RefreshSavedContextsAsync()
         {
             if (IsSavedContextsLoading) return;
