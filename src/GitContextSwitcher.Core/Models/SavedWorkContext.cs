@@ -32,5 +32,9 @@ namespace GitContextSwitcher.Core.Models
 
         // Branch name at time of saving
         public string? HeadBranch { get; set; }
+
+        // Runtime flag indicating the per-context folder is missing on disk. Not persisted.
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool IsFolderMissing { get; set; }
     }
 }

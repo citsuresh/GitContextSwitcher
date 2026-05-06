@@ -106,22 +106,170 @@ namespace GitContextSwitcher.UI.Views
                     }
                     catch { }
                 };
-                // Saved contexts expander handlers
-                SavedContextsExpander.Expanded += (s, e) =>
+                // Saved contexts expander handlers - use async handler so we can await the VM refresh and then force the DataGrid to refresh
+                SavedContextsExpander.Expanded += async (s, e) =>
                 {
                     try
                     {
                         if (DataContext is ViewModels.ProfileTabViewModel pvm)
                         {
-                            // Ensure saved contexts are refreshed when expander opens
-                            pvm.RefreshSavedContextsCommand.Execute(null);
+                            await pvm.RefreshSavedContextsAsync().ConfigureAwait(false);
+                            // After refresh completes, force UI refresh on dispatcher
+                            try
+                            {
+                                if (!Dispatcher.CheckAccess())
+                                {
+                                    Dispatcher.Invoke(() =>
+                                    {
+                                        try
+                                        {
+                                            var dg = this.FindName("SavedContextsGrid") as System.Windows.Controls.DataGrid;
+                                            dg?.Items.Refresh();
+                                        }
+                                        catch { }
+                                    });
+                                }
+                                else
+                                {
+                                    try
+                                    {
+                                        var dg = this.FindName("SavedContextsGrid") as System.Windows.Controls.DataGrid;
+                                        dg?.Items.Refresh();
+                                    }
+                                    catch { }
+                                }
+                            }
+                            catch { }
                         }
                     }
                     catch { }
                 };
+
+                // Hook up delete button handler (named in XAML) using FindName to avoid designer field issues
+                try
+                {
+                    var delObj = this.FindName("DeleteSavedContextButton");
+                    if (delObj is UIElement ui)
+                    {
+                        // Attach handler using routed event to avoid direct Button type references
+                        ui.AddHandler(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, new RoutedEventHandler(DeleteSavedContextButton_Click));
+                    }
+                }
+                catch { }
+            // Wire up selection changed handler on the saved contexts DataGrid so delete button enabled state updates
+            try
+            {
+                var gridObj = this.FindName("SavedContextsGrid");
+                if (gridObj is System.Windows.Controls.DataGrid dg)
+                {
+                    dg.SelectionChanged += (s, ev) =>
+                    {
+                        try
+                        {
+                            var delObj2 = this.FindName("DeleteSavedContextButton");
+                            if (delObj2 is System.Windows.Controls.Button delBtn)
+                            {
+                                delBtn.IsEnabled = dg.SelectedItem != null;
+                            }
+                        }
+                        catch { }
+                    };
+
+                    // initialize button enabled state
+                    try
+                    {
+                        var delObj2 = this.FindName("DeleteSavedContextButton");
+                        if (delObj2 is System.Windows.Controls.Button delBtn)
+                        {
+                            delBtn.IsEnabled = dg.SelectedItem != null;
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+
                 // Save context button is bound to the VM command in XAML (SaveContextCommand).
                 // The VM raises SaveContextRequested which this control listens for. Do not
                 // also handle the Click event here to avoid duplicate handling.
+            }
+            catch { }
+        }
+
+        private async void DeleteSavedContextButton_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_vm == null) return;
+                var grid = this.FindName("SavedContextsGrid") as System.Windows.Controls.DataGrid;
+                if (grid?.SelectedItem is GitContextSwitcher.Core.Models.SavedWorkContext sc)
+                {
+                    var owner = Window.GetWindow(this);
+                    var res = System.Windows.MessageBox.Show(owner, $"Are you sure you want to delete the saved context '{sc.Description ?? sc.Id.ToString()}'? This will remove the on-disk files (patch, WithHierarchy and Flat folders). The stash (if any) will NOT be deleted.", "Delete Saved Context", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    if (res == MessageBoxResult.Yes)
+                    {
+                        _vm.IsLoading = true;
+                        UpdateLoadingOverlay();
+
+                        // If the context folder is missing, silently remove metadata only
+                        var removed = false;
+                        try
+                        {
+                            if (sc.IsFolderMissing)
+                            {
+                                try { removed = await _vm.RemoveSavedContextMetadataAsync(sc).ConfigureAwait(false); } catch { removed = false; }
+                            }
+                            else
+                            {
+                                removed = await _vm.DeleteSavedWorkContextAsync(sc).ConfigureAwait(false);
+                            }
+                        }
+                        catch { removed = false; }
+
+                        _vm.IsLoading = false;
+                        UpdateLoadingOverlay();
+
+                        // Do not show error dialogs for missing-folder removals; only show error when a real delete failed
+                        if (!removed && !sc.IsFolderMissing)
+                        {
+                            try
+                            {
+                                if (!Dispatcher.CheckAccess())
+                                {
+                                    Dispatcher.Invoke(() => System.Windows.MessageBox.Show(owner, "Failed to delete saved context. Check history for details.", "Delete Saved Context", MessageBoxButton.OK, MessageBoxImage.Error));
+                                }
+                                else
+                                {
+                                    System.Windows.MessageBox.Show(owner, "Failed to delete saved context. Check history for details.", "Delete Saved Context", MessageBoxButton.OK, MessageBoxImage.Error);
+                                }
+                            }
+                            catch { }
+                        }
+                        else
+                        {
+                            try
+                            {
+                                // Ensure UI reflects authoritative on-disk state after delete/remove
+                                if (!_vm.IsDirty)
+                                {
+                                    if (!Dispatcher.CheckAccess())
+                                        Dispatcher.Invoke(async () => await _vm.ReloadProfileFromDiskAsync().ConfigureAwait(false));
+                                    else
+                                        await _vm.ReloadProfileFromDiskAsync().ConfigureAwait(false);
+                                }
+                                else
+                                {
+                                    if (_vm.RefreshSavedContextsCommand.CanExecute(null))
+                                    {
+                                        if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => _vm.RefreshSavedContextsCommand.Execute(null));
+                                        else _vm.RefreshSavedContextsCommand.Execute(null);
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                }
             }
             catch { }
         }
@@ -223,6 +371,27 @@ namespace GitContextSwitcher.UI.Views
 
                 // Wire SaveContextRequested to open dialog
                 _vm.SaveContextRequested += Vm_SaveContextRequested;
+
+                // Wire refresh saved contexts button click if present
+                try
+                {
+                    var refreshBtnObj = this.FindName("RefreshSavedContextsButton");
+                    if (refreshBtnObj is System.Windows.Controls.Button rbtn)
+                    {
+                        rbtn.Click += async (s, e) =>
+                        {
+                            try
+                            {
+                                if (_vm != null)
+                                {
+                                    await _vm.RefreshSavedContextsAsync().ConfigureAwait(false);
+                                }
+                            }
+                            catch { }
+                        };
+                    }
+                }
+                catch { }
 
                 // Ensure pending changes are populated for this profile when DataContext changes
                 try

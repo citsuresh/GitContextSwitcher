@@ -53,6 +53,149 @@ namespace GitContextSwitcher.UI.ViewModels
         private System.Collections.ObjectModel.ObservableCollection<SavedWorkContext> _savedContexts = new();
         public System.Collections.ObjectModel.ObservableCollection<SavedWorkContext> SavedContexts => _savedContexts;
 
+        // Delete a saved work context: remove folder and metadata and persist profile
+        public async Task<bool> DeleteSavedWorkContextAsync(SavedWorkContext? sc)
+        {
+            if (sc == null) return false;
+            try
+            {
+                var mgr = new ProfileStorageManager();
+
+                // Before attempting delete, verify the context folder exists. If missing, inform caller.
+                var ctxFolder = System.IO.Path.Combine(AppPaths.GetProfileFolder(Profile.Id), "SavedContexts", sc.Id.ToString());
+                if (!System.IO.Directory.Exists(ctxFolder))
+                {
+                    try { AddHistory("DeleteSavedContextFolderMissing", $"Context folder missing for '{sc.Description ?? sc.Id.ToString()}'"); } catch { }
+                    return false;
+                }
+
+                // Delete on-disk folder first
+                var deleted = await mgr.DeleteContextFolderAsync(Profile.Id, sc).ConfigureAwait(false);
+
+                if (!deleted)
+                {
+                    // Do not remove UI/profile entries if disk delete failed. Record history and return false so caller can show an error.
+                    try { AddHistory("DeleteSavedContextFailedOnDisk", $"Failed to delete saved context folder for '{sc.Description ?? sc.Id.ToString()}' on disk."); } catch { }
+                    return false;
+                }
+
+                // Remove from in-memory profile lists only after on-disk deletion succeeded
+                try
+                {
+                    if (Profile.SavedContexts != null)
+                    {
+                        var exist = Profile.SavedContexts.FirstOrDefault(s => s.Id == sc.Id);
+                        if (exist != null) Profile.SavedContexts.Remove(exist);
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    // Update observable collection on UI thread
+                    var dsp = System.Windows.Application.Current?.Dispatcher;
+                    void updateLocal()
+                    {
+                        try { _savedContexts.Remove(_savedContexts.FirstOrDefault(x => x.Id == sc.Id)); } catch { }
+                    }
+                    if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(updateLocal);
+                    else updateLocal();
+                }
+                catch { }
+
+                // Persist updated profile
+                try
+                {
+                    await mgr.SaveProfileAsync(Profile).ConfigureAwait(false);
+                    // Also notify store if configured
+                    try
+                    {
+                        var store = App.Services.GetService(typeof(GitContextSwitcher.UI.Services.IProfileStore)) as GitContextSwitcher.UI.Services.IProfileStore;
+                        if (store != null)
+                        {
+                            await store.SaveAsync(new System.Collections.Generic.List<WorkProfile> { Profile }).ConfigureAwait(false);
+                        }
+                    }
+                    catch { }
+                }
+                catch (Exception ex)
+                {
+                    try { AddHistory("DeleteSavedContextPersistFailed", ex.Message, ex); } catch { }
+                    return false;
+                }
+
+                AddHistory("DeletedSavedContext", $"Deleted saved context '{sc.Description ?? sc.Id.ToString()}' folder deleted={deleted}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                try { AddHistory("DeleteSavedContextFailed", ex.Message, ex); } catch { }
+                return false;
+            }
+        }
+
+        // Remove saved context metadata only (do not touch disk). Used when the context folder is already missing.
+        public async Task<bool> RemoveSavedContextMetadataAsync(SavedWorkContext? sc)
+        {
+            if (sc == null) return false;
+            try
+            {
+                // Remove from in-memory profile lists
+                try
+                {
+                    if (Profile.SavedContexts != null)
+                    {
+                        var exist = Profile.SavedContexts.FirstOrDefault(s => s.Id == sc.Id);
+                        if (exist != null) Profile.SavedContexts.Remove(exist);
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    // Update observable collection on UI thread
+                    var dsp = System.Windows.Application.Current?.Dispatcher;
+                    void updateLocal()
+                    {
+                        try { _savedContexts.Remove(_savedContexts.FirstOrDefault(x => x.Id == sc.Id)); } catch { }
+                    }
+                    if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(updateLocal);
+                    else updateLocal();
+                }
+                catch { }
+
+                // Persist updated profile
+                try
+                {
+                    var mgr = new ProfileStorageManager();
+                    await mgr.SaveProfileAsync(Profile).ConfigureAwait(false);
+                    // Also notify store if configured
+                    try
+                    {
+                        var store = App.Services.GetService(typeof(GitContextSwitcher.UI.Services.IProfileStore)) as GitContextSwitcher.UI.Services.IProfileStore;
+                        if (store != null)
+                        {
+                            await store.SaveAsync(new System.Collections.Generic.List<WorkProfile> { Profile }).ConfigureAwait(false);
+                        }
+                    }
+                    catch { }
+                }
+                catch (Exception ex)
+                {
+                    try { AddHistory("RemoveSavedContextPersistFailed", ex.Message, ex); } catch { }
+                    return false;
+                }
+
+                AddHistory("RemovedSavedContextMetadata", $"Removed saved context metadata '{sc.Description ?? sc.Id.ToString()}'");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                try { AddHistory("RemoveSavedContextMetadataFailed", ex.Message, ex); } catch { }
+                return false;
+            }
+        }
+
         // Command and event to request opening a save-context dialog in the host view
         public event EventHandler? SaveContextRequested;
         private RelayCommand? _saveContextCommand;
@@ -61,18 +204,148 @@ namespace GitContextSwitcher.UI.ViewModels
         });
 
         private RelayCommand? _refreshSavedContextsCommand;
-        public RelayCommand RefreshSavedContextsCommand => _refreshSavedContextsCommand ??= new RelayCommand(_ => {
+        private bool _isSavedContextsLoading;
+        public bool IsSavedContextsLoading
+        {
+            get => _isSavedContextsLoading;
+            set => SetProperty(ref _isSavedContextsLoading, value);
+        }
+
+        public async Task RefreshSavedContextsAsync()
+        {
+            if (IsSavedContextsLoading) return;
             try
             {
-                _savedContexts.Clear();
-                if (Profile.SavedContexts != null)
+                IsSavedContextsLoading = true;
+                var mgr = new ProfileStorageManager();
+                // Load the persisted profile from disk to obtain authoritative saved-context summaries.
+                // Retry briefly to tolerate transient file locks from concurrent writers.
+                WorkProfile? persisted = null;
+                Exception? lastLoadException = null;
+                const int maxAttempts = 5;
+                for (int attempt = 1; attempt <= maxAttempts; attempt++)
                 {
-                    foreach (var sc in Profile.SavedContexts.OrderByDescending(s => s.CreatedAt))
-                        _savedContexts.Add(sc);
+                    try
+                    {
+                        persisted = await mgr.LoadProfileAsync(Profile.Id).ConfigureAwait(false);
+                        lastLoadException = null;
+                        if (persisted != null)
+                            break;
+                        if (attempt < maxAttempts)
+                            await Task.Delay(100).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        lastLoadException = ex;
+                        if (attempt < maxAttempts)
+                            await Task.Delay(100).ConfigureAwait(false);
+                    }
                 }
+                if (persisted == null && lastLoadException != null) throw lastLoadException;
+                var list = persisted?.SavedContexts ?? new System.Collections.Generic.List<SavedWorkContext>();
+
+                var ordered = list.OrderByDescending(s => s.CreatedAt).ToList();
+
+                var dsp = System.Windows.Application.Current?.Dispatcher;
+                void updateLocal()
+                {
+                    try
+                    {
+                        _savedContexts.Clear();
+                        foreach (var sc in ordered)
+                            _savedContexts.Add(sc);
+                    }
+                    catch { }
+                }
+
+                if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(updateLocal);
+                else updateLocal();
+
+                try { Profile.SavedContexts = ordered; } catch { }
+                try { OnPropertyChanged(nameof(SavedContexts)); } catch { }
+
+                // After updating saved contexts, mark any entries whose folder is missing using IsFolderMissing flag
+                try
+                {
+                    var profileFolder = AppPaths.GetProfileFolder(Profile.Id);
+                    foreach (var sc in _savedContexts)
+                    {
+                        var folder = System.IO.Path.Combine(profileFolder, "SavedContexts", sc.Id.ToString());
+                        sc.IsFolderMissing = !System.IO.Directory.Exists(folder);
+                    }
+                }
+                catch { }
             }
-            catch { }
-        });
+            catch (Exception ex)
+            {
+                try { AddHistory("RefreshSavedContextsFailed", ex.Message, ex); } catch { }
+            }
+            finally
+            {
+                IsSavedContextsLoading = false;
+            }
+        }
+
+        public RelayCommand RefreshSavedContextsCommand => _refreshSavedContextsCommand ??= new RelayCommand(async _ => await RefreshSavedContextsAsync());
+
+        // Reload the entire profile from disk if the VM is not dirty. Returns true when reload applied.
+        public async Task<bool> ReloadProfileFromDiskAsync()
+        {
+            try
+            {
+                if (IsDirty) return false;
+                var mgr = new ProfileStorageManager();
+                var persisted = await mgr.LoadProfileAsync(Profile.Id).ConfigureAwait(false);
+                if (persisted == null) return false;
+
+                var ordered = (persisted.SavedContexts ?? new System.Collections.Generic.List<SavedWorkContext>())
+                    .OrderByDescending(s => s.CreatedAt)
+                    .ToList();
+
+                var dsp = System.Windows.Application.Current?.Dispatcher;
+                void apply()
+                {
+                    try
+                    {
+                        // Update simple fields
+                        Profile.Name = persisted.Name;
+                        Profile.RepoPath = persisted.RepoPath;
+                        Profile.Notes = persisted.Notes;
+                        Profile.CreatedAt = persisted.CreatedAt;
+                        Profile.LastModifiedAt = persisted.LastModifiedAt;
+                        Profile.PatchFilePath = persisted.PatchFilePath;
+                        Profile.StashRef = persisted.StashRef;
+
+                        // Replace files and saved contexts collections
+                        Profile.Files = persisted.Files ?? new System.Collections.Generic.List<ProfileFileEntry>();
+                        Profile.SavedContexts = ordered.ToList();
+
+                        // Update observable collections and derived UI state
+                        _savedContexts.Clear();
+                        foreach (var sc in ordered)
+                            _savedContexts.Add(sc);
+
+                        RebuildFileTree();
+                        OnPropertyChanged(nameof(Name));
+                        OnPropertyChanged(nameof(RepoPath));
+                        OnPropertyChanged(nameof(Notes));
+                        OnPropertyChanged(nameof(HasNotes));
+                        OnPropertyChanged(nameof(HasPendingChanges));
+                    }
+                    catch { }
+                }
+
+                if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(apply);
+                else apply();
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                try { AddHistory("ReloadProfileFailed", ex.Message, ex); } catch { }
+                return false;
+            }
+        }
 
         // Create a lightweight SavedWorkContext and add it to the profile (does not create folder/files yet)
         public SavedWorkContext AddSavedWorkContext(string? description)

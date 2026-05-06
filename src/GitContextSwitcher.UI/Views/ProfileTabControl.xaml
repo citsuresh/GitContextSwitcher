@@ -5,6 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:GitContextSwitcher.UI.Views;assembly=GitContextSwitcher.UI"
+
              mc:Ignorable="d"
              d:DesignHeight="600" d:DesignWidth="800">
     <UserControl.Resources>
@@ -12,6 +13,7 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="../Themes/SharedStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <!-- ObjectToBoolConverter removed from XAML; selection enable-binding handled in code-behind -->
             <!-- Unified style for the bordered expander sections so collapsed spacing is consistent -->
             <Style x:Key="SectionBorderStyle" TargetType="Border">
                 <Setter Property="BorderBrush" Value="#FFDDDDDD" />
@@ -305,22 +307,80 @@
                         </Grid.RowDefinitions>
 
                         <StackPanel Orientation="Horizontal" Grid.Row="0" HorizontalAlignment="Right">
+                            <Button x:Name="DeleteSavedContextButton" Content="Delete Selected Work Context" Width="196" Height="24" Style="{StaticResource InlineDangerIconButtonStyle}" ToolTip="Delete selected context" Margin="0,-6,6,0" />
                             <Button x:Name="SaveContextButton" Command="{Binding SaveContextCommand}" Style="{StaticResource InlineIconButtonStyle}" Width="132" Height="24" Margin="0,-6,6,0">Save Current Context</Button>
-                                    <Button Command="{Binding RefreshSavedContextsCommand}" Style="{StaticResource InlineIconButtonStyle}" Width="28" Height="24"  Margin="0,-2,0,0" ToolTip="Refresh" >
-                                        <TextBlock Text="⟳" FontSize="20" HorizontalAlignment="Center"  Margin="0,-8,0,0" VerticalAlignment="Center" />
+                            <Button x:Name="RefreshSavedContextsButton" Command="{Binding RefreshSavedContextsCommand}" Style="{StaticResource InlineIconButtonStyle}" Width="28" Height="24"  Margin="0,-2,0,0" ToolTip="Refresh" >
+                                <TextBlock Text="⟳" FontSize="20" HorizontalAlignment="Center"  Margin="0,-8,0,0" VerticalAlignment="Center" />
                             </Button>
                         </StackPanel>
 
                         <Grid Grid.Row="1">
-                            <DataGrid ItemsSource="{Binding SavedContexts}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" SelectionMode="Single" RowHeaderWidth="0" MinHeight="80">
+                            <DataGrid x:Name="SavedContextsGrid" ItemsSource="{Binding SavedContexts}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"  CanUserResizeColumns="True" CanUserReorderColumns="True"  HeadersVisibility="Column" SelectionMode="Single" RowHeaderWidth="0" MinHeight="80" MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalAlignment="Stretch">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Created" Binding="{Binding CreatedAt, StringFormat={}{0:G}}" Width="160" MinWidth="140" />
-                                    <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*" MinWidth="240" />
-                                    <DataGridTextColumn Header="Files" Binding="{Binding FileCount}" Width="80" MinWidth="60" />
-                                    <DataGridTextColumn Header="Branch@SHA" Binding="{Binding HeadBranch}" Width="180" MinWidth="140" />
+                                    <DataGridTextColumn CanUserResize="True" Header="Created" Binding="{Binding CreatedAt, StringFormat={}{0:G}}" Width="160" MinWidth="140" />
+                                    <DataGridTextColumn CanUserResize="True" Header="ID" Binding="{Binding Id}" MinWidth="260" />
+                                    <DataGridTemplateColumn CanUserResize="True" Header="Description" MinWidth="200">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock TextWrapping="Wrap">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Text" Value="{Binding Description}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsFolderMissing}" Value="True">
+                                                                    <Setter Property="Text" Value="Missing saved context folder" />
+                                                                    <Setter Property="Foreground" Value="Red" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn CanUserResize="True" Header="Files" Binding="{Binding FileCount}" Width="80" MinWidth="60" />
+                                    <DataGridTextColumn CanUserResize="True" Header="Branch" Binding="{Binding HeadBranch}" Width="180" MinWidth="120" />
                                 </DataGrid.Columns>
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsFolderMissing}" Value="True">
+                                            <!-- Keep background unchanged; text coloring handled in cell template -->
+                                            <Setter Property="Background" Value="Transparent" />
+                                        </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
                             </DataGrid>
                         </Grid>
+
+                        <!-- Overlay while saved contexts are loading: covers entire Saved Work Contexts section -->
+                        <Border Background="#80FFFFFF" Grid.RowSpan="2" Visibility="{Binding IsSavedContextsLoading, Converter={StaticResource BoolToVisibilityConverter}}" Panel.ZIndex="1000">
+                            <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Viewbox Width="32" Height="32">
+                                        <Canvas Width="32" Height="32">
+                                            <Ellipse Width="24" Height="24" Stroke="Gray" StrokeThickness="2" Opacity="0.3" Canvas.Left="4" Canvas.Top="4" />
+                                            <Path Data="M16,4 A12,12 0 1 1 15.99,4" Stroke="DodgerBlue" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
+                                                <Path.RenderTransform>
+                                                    <RotateTransform Angle="0" />
+                                                </Path.RenderTransform>
+                                                <Path.Triggers>
+                                                    <EventTrigger RoutedEvent="Loaded">
+                                                        <BeginStoryboard>
+                                                            <Storyboard RepeatBehavior="Forever">
+                                                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)" From="0" To="360" Duration="0:0:1" />
+                                                            </Storyboard>
+                                                        </BeginStoryboard>
+                                                    </EventTrigger>
+                                                </Path.Triggers>
+                                            </Path>
+                                        </Canvas>
+                                    </Viewbox>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
                     </Grid>
                 </Border>
                 </Expander>
@@ -360,20 +420,24 @@
                                       SelectionMode="Single"
                                       RowHeaderWidth="0"
                                       MinHeight="80"
+                                      MaxHeight="240"
                                       Margin="0"
-                                      VerticalAlignment="Top">
+                                      VerticalAlignment="Top"
+                                      CanUserResizeColumns="True"
+                                      CanUserReorderColumns="True"
+                                      VerticalScrollBarVisibility="Auto">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Timestamp" Binding="{Binding Timestamp, StringFormat={}{0:G}}" Width="180" MinWidth="140" />
-                                    <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="160" MinWidth="120" />
-                                    <DataGridTemplateColumn Header="Notes" Width="*" MinWidth="240">
+                                    <DataGridTextColumn CanUserResize="True" Header="Timestamp" Binding="{Binding Timestamp, StringFormat={}{0:G}}" Width="180" MinWidth="140" />
+                                    <DataGridTextColumn CanUserResize="True" Header="Action" Binding="{Binding Action}" Width="160" MinWidth="120" />
+                                    <DataGridTemplateColumn CanUserResize="True" Header="Notes" Width="*" MinWidth="160">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Notes}" TextWrapping="Wrap" />
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="User" Binding="{Binding User}" Width="140" MinWidth="100" />
-                                    <DataGridTemplateColumn Header="Error" Width="220" MinWidth="140">
+                                    <DataGridTextColumn CanUserResize="True" Header="User" Binding="{Binding User}" Width="140" MinWidth="100" />
+                                    <DataGridTemplateColumn CanUserResize="True" Header="Error" Width="220" MinWidth="140">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Error}" Foreground="DarkRed" TextWrapping="Wrap" />
