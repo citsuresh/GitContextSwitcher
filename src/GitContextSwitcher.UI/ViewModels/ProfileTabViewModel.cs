@@ -1,7 +1,9 @@
-using GitContextSwitcher.Core.Models;
+using System;
+using System.IO;
 using System.Linq;
-using GitContextSwitcher.UI.Services;
 using System.Threading;
+using GitContextSwitcher.Core.Models;
+using GitContextSwitcher.UI.Services;
 
 namespace GitContextSwitcher.UI.ViewModels
 {
@@ -524,6 +526,120 @@ namespace GitContextSwitcher.UI.ViewModels
                 sc.PatchFileName = System.IO.Path.GetFileName(patchPath);
                 sc.FileCount = exported;
                 sc.StashRef = stashRef;
+                // Persist per-file change kind into context metadata. Prefer using IGitService to get
+                // a canonical set of change kinds (porcelain v2 parsing). Fall back to patch parsing
+                // and finally to exported files if necessary.
+                try
+                {
+                    var changes = new System.Collections.Generic.List<GitContextSwitcher.Core.Models.ContextFileEntry>();
+
+                    // First try the IGitService (preferred).
+                    try
+                    {
+                        var gitSvc = App.Services.GetService(typeof(GitContextSwitcher.Core.Services.IGitService)) as GitContextSwitcher.Core.Services.IGitService;
+                        if (gitSvc != null)
+                        {
+                            var fileChanges = await gitSvc.GetFileChangesAsync(Profile.RepoPath!).ConfigureAwait(false);
+                            if (fileChanges != null && fileChanges.Any())
+                            {
+                                var includeSet = new System.Collections.Generic.HashSet<string>(files, StringComparer.OrdinalIgnoreCase);
+                                foreach (var fc in fileChanges)
+                                {
+                                    try
+                                    {
+                                        // Only include files that are part of this saved context (if files list is populated)
+                                        if (includeSet.Count == 0 || includeSet.Contains(fc.Path))
+                                        {
+                                            changes.Add(new GitContextSwitcher.Core.Models.ContextFileEntry
+                                            {
+                                                Path = fc.Path?.Replace(System.IO.Path.DirectorySeparatorChar, '/') ?? string.Empty,
+                                                Change = fc.Kind.ToString()
+                                            });
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+
+                    // If IGitService didn't yield results, fall back to crude patch parsing (existing behavior)
+                    if (!changes.Any() && !string.IsNullOrEmpty(patchPath) && File.Exists(patchPath))
+                    {
+                        var patchText = await File.ReadAllTextAsync(patchPath).ConfigureAwait(false);
+                        using var sr = new StringReader(patchText);
+                        string? line;
+                        string? currentPath = null;
+                        string changeKind = "modified";
+                        while ((line = sr.ReadLine()) != null)
+                        {
+                            if (line.StartsWith("diff --git "))
+                            {
+                                var parts = line.Split(' ');
+                                if (parts.Length >= 3)
+                                {
+                                    var b = parts[2];
+                                    if (b.StartsWith("b/")) currentPath = b.Substring(2);
+                                    else currentPath = b;
+                                    changeKind = "modified"; // default
+                                }
+                            }
+                            else if (line.StartsWith("new file mode") && currentPath != null)
+                            {
+                                changeKind = "added";
+                                changes.Add(new GitContextSwitcher.Core.Models.ContextFileEntry { Path = currentPath, Change = changeKind });
+                                currentPath = null;
+                            }
+                            else if (line.StartsWith("deleted file mode") && currentPath != null)
+                            {
+                                changeKind = "deleted";
+                                changes.Add(new GitContextSwitcher.Core.Models.ContextFileEntry { Path = currentPath, Change = changeKind });
+                                currentPath = null;
+                            }
+                            else if (line.StartsWith("@@ ") && currentPath != null)
+                            {
+                                changeKind = "modified";
+                                changes.Add(new GitContextSwitcher.Core.Models.ContextFileEntry { Path = currentPath, Change = changeKind });
+                                currentPath = null;
+                            }
+                        }
+                    }
+
+                    // Attach to saved context if we collected anything
+                    if (changes.Any()) sc.Files = changes;
+                    else
+                    {
+                        // Fallback: if neither IGitService nor patch parsing detected per-file change kinds,
+                        // prefer the exported files under WithHierarchy. Default change kind is 'Modified'.
+                        try
+                        {
+                            var fallbackList = new System.Collections.Generic.List<GitContextSwitcher.Core.Models.ContextFileEntry>();
+                            try
+                            {
+                                var withHierarchy = System.IO.Path.Combine(ctxFolder ?? string.Empty, "WithHierarchy");
+                                if (System.IO.Directory.Exists(withHierarchy))
+                                {
+                                    var exportedFiles = System.IO.Directory.GetFiles(withHierarchy, "*", System.IO.SearchOption.AllDirectories);
+                                    foreach (var ef in exportedFiles)
+                                    {
+                                        var rel = System.IO.Path.GetRelativePath(withHierarchy, ef).Replace(System.IO.Path.DirectorySeparatorChar, '/');
+                                        fallbackList.Add(new GitContextSwitcher.Core.Models.ContextFileEntry { Path = rel, Change = GitContextSwitcher.Core.Models.GitChangeKind.Modified.ToString() });
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            if (fallbackList.Any()) sc.Files = fallbackList;
+                            else if (files != null && files.Any())
+                            {
+                                sc.Files = files.Select(p => new GitContextSwitcher.Core.Models.ContextFileEntry { Path = p, Change = GitContextSwitcher.Core.Models.GitChangeKind.Modified.ToString() }).ToList();
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
 
                 // Write context metadata
                 await mgr.WriteContextMetadataAsync(Profile.Id, sc).ConfigureAwait(false);

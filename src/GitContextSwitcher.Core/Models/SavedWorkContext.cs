@@ -33,8 +33,17 @@ namespace GitContextSwitcher.Core.Models
         // Branch name at time of saving
         public string? HeadBranch { get; set; }
 
+        // Optional per-file change list persisted into context.json to aid previews
+        public System.Collections.Generic.List<ContextFileEntry>? Files { get; set; }
+
         // Runtime flag indicating the per-context folder is missing on disk. Not persisted.
         [System.Text.Json.Serialization.JsonIgnore]
         public bool IsFolderMissing { get; set; }
+    }
+
+    public class ContextFileEntry
+    {
+        public string? Path { get; set; }
+        public string? Change { get; set; }
     }
 }

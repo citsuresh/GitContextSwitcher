@@ -153,6 +153,48 @@ namespace GitContextSwitcher.UI.Services
             catch { return new List<SavedWorkContext>(); }
         }
 
+        // List files in a saved-context folder. Returns full paths.
+        public async Task<List<string>> ListContextFilesAsync(Guid profileId, Guid contextId)
+        {
+            try
+            {
+                var ctxFolder = Path.Combine(AppPaths.GetProfileFolder(profileId), "SavedContexts", contextId.ToString());
+                if (!Directory.Exists(ctxFolder)) return new List<string>();
+                // Return files in flattened enumeration (not recursive into WithHierarchy/Flat by default)
+                var files = Directory.GetFiles(ctxFolder, "*", SearchOption.AllDirectories).ToList();
+                return files;
+            }
+            catch { return new List<string>(); }
+        }
+
+        // Read file content from a saved-context folder up to a maximum number of bytes. Returns (text, truncated)
+        public async Task<(string?, bool)> ReadContextFileContentAsync(Guid profileId, Guid contextId, string relativeFileName, int maxBytes)
+        {
+            try
+            {
+                var ctxFolder = Path.Combine(AppPaths.GetProfileFolder(profileId), "SavedContexts", contextId.ToString());
+                if (!Directory.Exists(ctxFolder)) return (null, false);
+                // Find file case-insensitively under the context folder
+                var all = Directory.GetFiles(ctxFolder, "*", SearchOption.AllDirectories);
+                var match = all.FirstOrDefault(f => string.Equals(Path.GetFileName(f), relativeFileName, StringComparison.OrdinalIgnoreCase));
+                if (match == null) return (null, false);
+
+                using var fs = File.Open(match, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var sr = new StreamReader(fs);
+                char[] buffer = new char[maxBytes + 1];
+                int read = await sr.ReadBlockAsync(buffer, 0, maxBytes + 1).ConfigureAwait(false);
+                if (read <= maxBytes)
+                {
+                    return (new string(buffer, 0, read), false);
+                }
+                else
+                {
+                    return (new string(buffer, 0, maxBytes), true);
+                }
+            }
+            catch { return (null, false); }
+        }
+
         // Delete context folder (used for cleanup on failure or explicit deletion)
         public async Task<bool> DeleteContextFolderAsync(Guid profileId, SavedWorkContext context)
         {

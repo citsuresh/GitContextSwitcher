@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using GitContextSwitcher.UI.Services;
@@ -226,6 +228,7 @@ namespace GitContextSwitcher.UI.Views
                             {
                                 openBtn.IsEnabled = dg.SelectedItem != null;
                             }
+                            // No inline preview any more; Preview button opens modal window
                         }
                         catch { }
                     };
@@ -454,6 +457,40 @@ namespace GitContextSwitcher.UI.Views
                                 if (_vm != null)
                                 {
                                     await _vm.RefreshSavedContextsAsync().ConfigureAwait(false);
+                                }
+                            }
+                            catch { }
+                        };
+                    }
+                }
+                catch { }
+
+                // Hook up Preview button
+                try
+                {
+                    var previewObj = this.FindName("PreviewContextButton");
+                    if (previewObj is System.Windows.Controls.Button previewBtn)
+                    {
+                        previewBtn.Click += (s, e) =>
+                        {
+                            try
+                            {
+                                if (_vm == null) return;
+                                var dg = this.FindName("SavedContextsGrid") as System.Windows.Controls.DataGrid;
+                                if (dg?.SelectedItem is GitContextSwitcher.Core.Models.SavedWorkContext sc)
+                                {
+                                    var pv = new ViewModels.PreviewViewModel(_vm.Profile.Id, sc);
+                                    var win = new PreviewWindow { Owner = Window.GetWindow(this), DataContext = pv };
+                                    // Set the preview pane DataContext inside the window
+                                    try
+                                    {
+                                        var inner = win.FindName("InnerPreviewPane") as Views.PreviewPane;
+                                        if (inner != null) inner.DataContext = pv;
+                                    }
+                                    catch { }
+
+                                    _ = pv.LoadAsync();
+                                    win.ShowDialog();
                                 }
                             }
                             catch { }
