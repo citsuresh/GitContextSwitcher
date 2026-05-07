@@ -336,22 +336,143 @@ namespace GitContextSwitcher.UI.Services
             try
             {
                 if (!File.Exists(hf)) return;
-                var bytes = await File.ReadAllBytesAsync(hf).ConfigureAwait(false);
-                if (bytes == null || bytes.Length == 0) return;
+                var text = await File.ReadAllTextAsync(hf).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(text)) return;
 
-                var reader = new System.Text.Json.Utf8JsonReader(bytes, isFinalBlock: true, state: default);
-                var elements = new List<System.Text.Json.JsonElement>();
-                while (reader.Read())
+                // Quick normalization: if objects were written back-to-back without separators ("}{"),
+                // insert a newline between the objects so they become parseable as sequential JSON values.
+                // Do this safely by only inserting when the sequence occurs outside of JSON string literals
+                // to avoid corrupting any legitimate text that contains the sequence.
+                if (text.Contains("}{"))
                 {
-                    if (reader.TokenType == System.Text.Json.JsonTokenType.StartObject)
+                    var sb = new System.Text.StringBuilder(text.Length + 16);
+                    bool inString = false;
+                    bool escape = false;
+                    for (int i = 0; i < text.Length; i++)
+                    {
+                        var ch = text[i];
+                        // Handle escape state
+                        if (ch == '\\' && !escape)
+                        {
+                            escape = true;
+                            sb.Append(ch);
+                            continue;
+                        }
+
+                        // Toggle inString when encountering an unescaped quote
+                        if (ch == '"' && !escape)
+                        {
+                            inString = !inString;
+                        }
+
+                        // Reset escape flag (it only applies to one character)
+                        escape = false;
+
+                        // If we're not inside a string and see '}' followed immediately by '{', insert newline between
+                        if (!inString && ch == '}' && i + 1 < text.Length && text[i + 1] == '{')
+                        {
+                            sb.Append('}');
+                            sb.Append('\n');
+                            // Skip the next '{' because we'll append it now
+                            i++;
+                            sb.Append('{');
+                            continue;
+                        }
+
+                        sb.Append(ch);
+                    }
+                    text = sb.ToString();
+                }
+
+                // Extract top-level JSON object substrings by scanning for balanced braces outside of strings.
+                var elements = new List<System.Text.Json.JsonElement>();
+                try
+                {
+                    var objects = new System.Collections.Generic.List<string>();
+                    int depth = 0;
+                    bool inString2 = false;
+                    bool escape2 = false;
+                    int? objStart = null;
+                    for (int i = 0; i < text.Length; i++)
+                    {
+                        var ch = text[i];
+                        if (ch == '\\' && !escape2)
+                        {
+                            escape2 = true;
+                            continue;
+                        }
+                        if (ch == '"' && !escape2)
+                        {
+                            inString2 = !inString2;
+                        }
+                        escape2 = false;
+
+                        if (!inString2)
+                        {
+                            if (ch == '{')
+                            {
+                                if (depth == 0) objStart = i;
+                                depth++;
+                            }
+                            else if (ch == '}')
+                            {
+                                depth--;
+                                if (depth == 0 && objStart.HasValue)
+                                {
+                                    var obj = text.Substring(objStart.Value, i - objStart.Value + 1);
+                                    objects.Add(obj);
+                                    objStart = null;
+                                }
+                            }
+                        }
+                    }
+
+                    // Parse each extracted object safely
+                    foreach (var o in objects)
                     {
                         try
                         {
-                            using var doc = System.Text.Json.JsonDocument.ParseValue(ref reader);
+                            using var doc = System.Text.Json.JsonDocument.Parse(o);
                             elements.Add(doc.RootElement.Clone());
                         }
                         catch { }
                     }
+
+                    // If we didn't find any balanced objects, fall back to per-line or block parsing
+                    if (!elements.Any())
+                    {
+                        // First try per-line JSON (NDJSON)
+                        var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var l in lines)
+                        {
+                            try
+                            {
+                                using var doc = System.Text.Json.JsonDocument.Parse(l);
+                                elements.Add(doc.RootElement.Clone());
+                            }
+                            catch { }
+                        }
+
+                        // If still empty, try splitting on double-newline (pretty-printed blocks)
+                        if (!elements.Any())
+                        {
+                            var blocks = text.Split(new[] { "\r\n\r\n", "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+                            foreach (var b in blocks)
+                            {
+                                try
+                                {
+                                    using var doc = System.Text.Json.JsonDocument.Parse(b);
+                                    elements.Add(doc.RootElement.Clone());
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // If anything goes wrong, leave elements empty and exit
+                    elements.Clear();
                 }
 
                 if (!elements.Any()) return;

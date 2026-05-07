@@ -760,9 +760,20 @@ namespace GitContextSwitcher.UI.Views
 
         public async Task EnsureRepoInfoLoadedAsync()
         {
-            try { System.Diagnostics.Debug.WriteLine($"EnsureRepoInfoLoadedAsync: enter DataContext={DataContext}"); } catch { }
+            try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: enter"); } catch { }
             // If DataContext has a RepoPath, attempt to discover repo info and populate the control
-            if (DataContext is ViewModels.ProfileTabViewModel pvm)
+            // Access DataContext on the UI thread to avoid cross-thread DependencyObject access errors.
+            object? dc = null;
+            if (!Dispatcher.CheckAccess())
+            {
+                try { dc = Dispatcher.Invoke(() => DataContext); } catch { dc = null; }
+            }
+            else
+            {
+                dc = DataContext;
+            }
+
+            if (dc is ViewModels.ProfileTabViewModel pvm)
             {
                 try { System.Diagnostics.Debug.WriteLine($"EnsureRepoInfoLoadedAsync: profile='{pvm.Name}' RepoPath='{pvm.RepoPath}'"); } catch { }
                 if (string.IsNullOrWhiteSpace(pvm.RepoPath))
@@ -780,22 +791,22 @@ namespace GitContextSwitcher.UI.Views
                         try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: calling VM.RefreshRepoInfoAsync"); } catch { }
                         await pvm.RefreshRepoInfoAsync();
                         try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: returned from VM.RefreshRepoInfoAsync"); } catch { }
-                    if (pvm.RepoInfo != null)
-                    {
-                        SetRepoInfo(pvm.RepoInfo);
-                    }
-                    else
-                    {
-                        try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: VM.RepoInfo is null after refresh"); } catch { }
-                    }
+                        if (pvm.RepoInfo != null)
+                        {
+                            if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => SetRepoInfo(pvm.RepoInfo)); else SetRepoInfo(pvm.RepoInfo);
+                        }
+                        else
+                        {
+                            try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: VM.RepoInfo is null after refresh"); } catch { }
+                        }
 
-                    // Ensure pending changes populate and show loading overlay until complete
-                    try
-                    {
-                        // Rebuild file tree and expand
-                        RebuildPendingFilesUI();
-                    }
-                    catch { }
+                        // Ensure pending changes populate and show loading overlay until complete
+                        try
+                        {
+                            // Rebuild file tree and expand (must run on UI thread)
+                            if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => RebuildPendingFilesUI()); else RebuildPendingFilesUI();
+                        }
+                        catch { }
                     }
                     else
                     {
@@ -813,8 +824,8 @@ namespace GitContextSwitcher.UI.Views
 
                         if (info != null)
                         {
-                            SetRepoInfo(info);
-                            try { RebuildPendingFilesUI(); } catch { }
+                            if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => SetRepoInfo(info)); else SetRepoInfo(info);
+                            try { if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => RebuildPendingFilesUI()); else RebuildPendingFilesUI(); } catch { }
                         }
                     }
                 }
