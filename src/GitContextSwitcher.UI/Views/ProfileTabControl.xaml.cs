@@ -12,6 +12,11 @@ namespace GitContextSwitcher.UI.Views
     {
         private ViewModels.ProfileTabViewModel? _vm;
         private string? _repoName;
+        private string? _lastRepoPath;
+        // Guard against reentrant/duplicate EnsureRepoInfoLoadedAsync calls for the same repo
+        private System.Threading.Tasks.Task? _ensureRepoTask;
+        private string? _lastEnsureRepoPath;
+        private DateTime _lastEnsureTime = DateTime.MinValue;
         public static readonly DependencyProperty HistoryCountBadgeProperty = DependencyProperty.Register(
             nameof(HistoryCountBadge), typeof(int), typeof(ProfileTabControl), new PropertyMetadata(0));
 
@@ -387,6 +392,8 @@ namespace GitContextSwitcher.UI.Views
             _vm = DataContext as ViewModels.ProfileTabViewModel;
             if (_vm != null)
             {
+                    // Track last known repo path to avoid re-triggering refreshes for the same path
+                    try { _lastRepoPath = _vm.RepoPath; } catch { _lastRepoPath = null; }
                 _vm.ProfileChanged += Vm_ProfileChanged;
                 // Set initial expanded state for sections based on content
                 try
@@ -617,8 +624,18 @@ namespace GitContextSwitcher.UI.Views
 
         private void Vm_ProfileChanged(object? sender, EventArgs e)
         {
-            // If RepoPath changed, refresh repo info (no-op rebuild touch)
-            _ = EnsureRepoInfoLoadedAsync();
+            try
+            {
+                // Only trigger repo info re-load if the RepoPath actually changed to avoid refresh loops
+                string? currentPath = null;
+                try { currentPath = _vm?.RepoPath; } catch { currentPath = null; }
+                if (!string.Equals(_lastRepoPath, currentPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    _lastRepoPath = currentPath;
+                    _ = EnsureRepoInfoLoadedAsync();
+                }
+            }
+            catch { }
             // Also expand the pending changes tree when profile changes
             try
             {
@@ -761,49 +778,62 @@ namespace GitContextSwitcher.UI.Views
         public async Task EnsureRepoInfoLoadedAsync()
         {
             try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: enter"); } catch { }
-            // If DataContext has a RepoPath, attempt to discover repo info and populate the control
-            // Access DataContext on the UI thread to avoid cross-thread DependencyObject access errors.
-            object? dc = null;
-            if (!Dispatcher.CheckAccess())
+
+            // Prevent reentrant ensures for the same repo within a short time window
+            object? dcNow = null;
+            if (!Dispatcher.CheckAccess()) dcNow = Dispatcher.Invoke(() => DataContext);
+            else dcNow = DataContext;
+
+            var pvmNow = dcNow as ViewModels.ProfileTabViewModel;
+            if (pvmNow == null)
             {
-                try { dc = Dispatcher.Invoke(() => DataContext); } catch { dc = null; }
-            }
-            else
-            {
-                dc = DataContext;
+                ClearRepoInfo();
+                return;
             }
 
-            if (dc is ViewModels.ProfileTabViewModel pvm)
+            var repoPath = pvmNow.RepoPath;
+            if (string.IsNullOrWhiteSpace(repoPath))
             {
-                try { System.Diagnostics.Debug.WriteLine($"EnsureRepoInfoLoadedAsync: profile='{pvm.Name}' RepoPath='{pvm.RepoPath}'"); } catch { }
-                if (string.IsNullOrWhiteSpace(pvm.RepoPath))
-                {
-                    // No repo path for this profile - clear any existing repo info
-                    ClearRepoInfo();
-                    try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: no RepoPath, cleared"); } catch { }
-                    return;
-                }
+                ClearRepoInfo();
+                return;
+            }
+
+            // If an ensure is already running for same path, skip
+            if (_ensureRepoTask != null && !_ensureRepoTask.IsCompleted && string.Equals(_lastEnsureRepoPath, repoPath, StringComparison.OrdinalIgnoreCase))
+            {
+                try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: already running for same repo, skipping"); } catch { }
+                return;
+            }
+
+            // Debounce rapid repeated ensures: ignore if last ensure was very recent
+            if (_lastEnsureTime > DateTime.MinValue && (DateTime.UtcNow - _lastEnsureTime).TotalMilliseconds < 250 && string.Equals(_lastEnsureRepoPath, repoPath, StringComparison.OrdinalIgnoreCase))
+            {
+                try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: recent ensure executed, skipping"); } catch { }
+                return;
+            }
+
+            _lastEnsureRepoPath = repoPath;
+            _lastEnsureTime = DateTime.UtcNow;
+
+            // Run the actual work on a background task and store reference to prevent concurrent runs
+            _ensureRepoTask = Task.Run(async () =>
+            {
                 try
                 {
-                    // Prefer ViewModel-driven refresh so RepoInfo is stored on VM for reuse
-                    if (pvm.RefreshRepoInfoCommand.CanExecute(null))
+                    try { System.Diagnostics.Debug.WriteLine($"EnsureRepoInfoLoadedAsync: profile='{pvmNow.Name}' RepoPath='{repoPath}'"); } catch { }
+
+                    if (pvmNow.RefreshRepoInfoCommand.CanExecute(null))
                     {
                         try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: calling VM.RefreshRepoInfoAsync"); } catch { }
-                        await pvm.RefreshRepoInfoAsync();
+                        await pvmNow.RefreshRepoInfoAsync().ConfigureAwait(false);
                         try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: returned from VM.RefreshRepoInfoAsync"); } catch { }
-                        if (pvm.RepoInfo != null)
+                        if (pvmNow.RepoInfo != null)
                         {
-                            if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => SetRepoInfo(pvm.RepoInfo)); else SetRepoInfo(pvm.RepoInfo);
-                        }
-                        else
-                        {
-                            try { System.Diagnostics.Debug.WriteLine("EnsureRepoInfoLoadedAsync: VM.RepoInfo is null after refresh"); } catch { }
+                            if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => SetRepoInfo(pvmNow.RepoInfo)); else SetRepoInfo(pvmNow.RepoInfo);
                         }
 
-                        // Ensure pending changes populate and show loading overlay until complete
                         try
                         {
-                            // Rebuild file tree and expand (must run on UI thread)
                             if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => RebuildPendingFilesUI()); else RebuildPendingFilesUI();
                         }
                         catch { }
@@ -814,12 +844,12 @@ namespace GitContextSwitcher.UI.Views
                         Core.Models.RepoInfo info = null;
                         if (git != null)
                         {
-                            info = await Task.Run(() => git.GetRepoInfoAsync(pvm.RepoPath!));
+                            info = await Task.Run(() => git.GetRepoInfoAsync(repoPath));
                         }
                         else
                         {
                             var impl = new Infrastructure.Services.GitCliService();
-                            info = await Task.Run(() => impl.GetRepoInfoAsync(pvm.RepoPath!));
+                            info = await Task.Run(() => impl.GetRepoInfoAsync(repoPath));
                         }
 
                         if (info != null)
@@ -829,8 +859,18 @@ namespace GitContextSwitcher.UI.Views
                         }
                     }
                 }
-                catch { }
-            }
+                catch (Exception ex)
+                {
+                    try { System.Diagnostics.Debug.WriteLine($"EnsureRepoInfoLoadedAsync: failed: {ex}"); } catch { }
+                }
+                finally
+                {
+                    // clear running task reference only when completed
+                    try { _ensureRepoTask = null; } catch { }
+                }
+            });
+
+            await _ensureRepoTask.ConfigureAwait(false);
         }
 
         private void RebuildPendingFilesUI()

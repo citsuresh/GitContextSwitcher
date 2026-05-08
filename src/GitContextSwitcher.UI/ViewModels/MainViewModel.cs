@@ -34,11 +34,13 @@ namespace GitContextSwitcher.UI.ViewModels
                     if (quick != null && quick.Any())
                     {
                         // Populate Profiles on UI thread immediately
+                        // Detach handlers from existing VMs before clearing to avoid leaked subscriptions
+                        try { foreach (var ex in Profiles.ToList()) DetachProfileVm(ex); } catch { }
                         Profiles.Clear();
                         foreach (var p in quick)
                         {
                             var vm = new ProfileTabViewModel(p) { IsOpen = true };
-                            vm.ProfileChanged += Child_ProfileChanged;
+                            AttachProfileVm(vm);
                             Profiles.Add(vm);
                         }
                         SelectedProfile = Profiles.FirstOrDefault();
@@ -74,11 +76,13 @@ namespace GitContextSwitcher.UI.ViewModels
                         // This prevents the quick-load + background-load path from adding the same profiles twice.
                         if (loaded.Any())
                         {
+                            // Detach handlers from existing VMs before replacing to avoid leaked subscriptions
+                            try { foreach (var ex in Profiles.ToList()) DetachProfileVm(ex); } catch { }
                             Profiles.Clear();
                             foreach (var p in loaded)
                             {
                                 var vm = new ProfileTabViewModel(p) { IsOpen = true };
-                                vm.ProfileChanged += Child_ProfileChanged;
+                                AttachProfileVm(vm);
                                 Profiles.Add(vm);
                             }
 
@@ -184,7 +188,7 @@ namespace GitContextSwitcher.UI.ViewModels
             var profile = new WorkProfile { Name = name, Notes = string.Empty, CreatedAt = DateTime.UtcNow, RepoPath = repoPath };
             var vm = new ProfileTabViewModel(profile) { IsOpen = true };
             Profiles.Add(vm);
-            vm.ProfileChanged += Child_ProfileChanged;
+            AttachProfileVm(vm);
             SelectedProfile = vm;
             OnPropertyChanged(nameof(OpenProfiles));
             OnPropertyChanged(nameof(CanCloseAny));
@@ -226,7 +230,7 @@ namespace GitContextSwitcher.UI.ViewModels
         {
             var profile = new WorkProfile { Name = name, Notes = string.Empty, CreatedAt = DateTime.UtcNow };
             var vm = new ProfileTabViewModel(profile) { IsOpen = true };
-            vm.ProfileChanged += Child_ProfileChanged;
+            AttachProfileVm(vm);
             Profiles.Add(vm);
             SelectedProfile = vm;
             OnPropertyChanged(nameof(OpenProfiles));
@@ -387,5 +391,25 @@ namespace GitContextSwitcher.UI.ViewModels
         }
 
         // Pin/unpin feature removed
+        private void AttachProfileVm(ProfileTabViewModel vm)
+        {
+            try
+            {
+                if (vm == null) return;
+                vm.ProfileChanged -= Child_ProfileChanged;
+                vm.ProfileChanged += Child_ProfileChanged;
+            }
+            catch { }
+        }
+
+        private void DetachProfileVm(ProfileTabViewModel vm)
+        {
+            try
+            {
+                if (vm == null) return;
+                vm.ProfileChanged -= Child_ProfileChanged;
+            }
+            catch { }
+        }
     }
 }
