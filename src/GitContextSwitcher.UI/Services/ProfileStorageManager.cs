@@ -15,7 +15,10 @@ namespace GitContextSwitcher.UI.Services
     public class ProfileStorageManager
     {
         private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-        private readonly Dictionary<Guid, SemaphoreSlim> _locks = new();
+        // Shared locks across ProfileStorageManager instances to serialize per-profile IO in-process
+        private static readonly Dictionary<Guid, SemaphoreSlim> _locks = new();
+        // Global lock for master index file to prevent concurrent writes across profiles
+        private static readonly SemaphoreSlim _masterIndexLock = new SemaphoreSlim(1, 1);
 
         public ProfileStorageManager()
         {
@@ -77,10 +80,18 @@ namespace GitContextSwitcher.UI.Services
             {
                 var path = AppPaths.MasterIndexPath;
                 if (!File.Exists(path)) return new Dictionary<Guid, string>();
-                using var stream = File.OpenRead(path);
-                var data = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(stream, _json).ConfigureAwait(false);
-                if (data == null) return new Dictionary<Guid, string>();
-                return data.Where(kv => Guid.TryParse(kv.Key, out _)).ToDictionary(kv => Guid.Parse(kv.Key), kv => kv.Value);
+                await _masterIndexLock.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    using var stream = File.OpenRead(path);
+                    var data = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(stream, _json).ConfigureAwait(false);
+                    if (data == null) return new Dictionary<Guid, string>();
+                    return data.Where(kv => Guid.TryParse(kv.Key, out _)).ToDictionary(kv => Guid.Parse(kv.Key), kv => kv.Value);
+                }
+                finally
+                {
+                    _masterIndexLock.Release();
+                }
             }
             catch
             {
@@ -94,8 +105,16 @@ namespace GitContextSwitcher.UI.Services
             {
                 var path = AppPaths.MasterIndexPath;
                 var conv = map.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
-                using var stream = File.Open(path, FileMode.Create, FileAccess.Write, FileShare.None);
-                await JsonSerializer.SerializeAsync(stream, conv, _json).ConfigureAwait(false);
+                await _masterIndexLock.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    using var stream = File.Open(path, FileMode.Create, FileAccess.Write, FileShare.None);
+                    await JsonSerializer.SerializeAsync(stream, conv, _json).ConfigureAwait(false);
+                }
+                finally
+                {
+                    _masterIndexLock.Release();
+                }
             }
             catch { }
         }
@@ -249,6 +268,7 @@ namespace GitContextSwitcher.UI.Services
                 var master = await ReadMasterIndexAsync().ConfigureAwait(false);
                 var rel = folder; // for now absolute path
                 master[id] = rel;
+                // Use dedicated master index lock in WriteMasterIndexAsync
                 await WriteMasterIndexAsync(master).ConfigureAwait(false);
             }
             catch { }
@@ -288,7 +308,31 @@ namespace GitContextSwitcher.UI.Services
                 // Serialize history entries as single-line JSON (NDJSON). Use a non-indented serializer
                 var jsonOptionsInline = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = false };
                 var line = JsonSerializer.Serialize(entry, jsonOptionsInline);
-                await File.AppendAllTextAsync(hf, line + Environment.NewLine).ConfigureAwait(false);
+                // Robust append with retry to tolerate transient file locks by other processes (antivirus, editors)
+                const int maxAttempts = 6;
+                int attempt = 0;
+                var delay = 50;
+                while (true)
+                {
+                    try
+                    {
+                        // Open file for append allowing other readers. Use FileShare.Read to tolerate reads while writing.
+                        using (var fs = new FileStream(hf, FileMode.Append, FileAccess.Write, FileShare.Read))
+                        using (var sw = new StreamWriter(fs))
+                        {
+                            await sw.WriteLineAsync(line).ConfigureAwait(false);
+                            await sw.FlushAsync().ConfigureAwait(false);
+                        }
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        attempt++;
+                        if (attempt >= maxAttempts) throw;
+                        try { await Task.Delay(delay).ConfigureAwait(false); } catch { }
+                        delay = Math.Min(1000, delay * 2);
+                    }
+                }
             }
             catch { }
             finally { s.Release(); }
@@ -490,10 +534,58 @@ namespace GitContextSwitcher.UI.Services
                     catch { }
                 }
 
-                // Overwrite the history file atomically
+                // Overwrite the history file atomically with retries to tolerate transient locks
                 var temp = hf + ".tmp";
-                await File.WriteAllTextAsync(temp, sw.ToString()).ConfigureAwait(false);
-                File.Replace(temp, hf, null);
+                // Write temp file (retry on transient IO failures)
+                const int writeMaxAttempts = 4;
+                int writeAttempt = 0;
+                int writeDelay = 50;
+                while (true)
+                {
+                    try
+                    {
+                        await File.WriteAllTextAsync(temp, sw.ToString()).ConfigureAwait(false);
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        writeAttempt++;
+                        if (writeAttempt >= writeMaxAttempts) throw;
+                        try { await Task.Delay(writeDelay).ConfigureAwait(false); } catch { }
+                        writeDelay = Math.Min(1000, writeDelay * 2);
+                    }
+                }
+
+                // Attempt to atomically replace destination, retrying when another process has the file open
+                const int replaceMaxAttempts = 6;
+                int replaceAttempt = 0;
+                int replaceDelay = 50;
+                while (true)
+                {
+                    try
+                    {
+                        if (File.Exists(hf))
+                        {
+                            File.Replace(temp, hf, null);
+                        }
+                        else
+                        {
+                            File.Move(temp, hf);
+                        }
+                        break;
+                    }
+                    catch (IOException)
+                    {
+                        replaceAttempt++;
+                        if (replaceAttempt >= replaceMaxAttempts)
+                        {
+                            try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                            throw;
+                        }
+                        try { await Task.Delay(replaceDelay).ConfigureAwait(false); } catch { }
+                        replaceDelay = Math.Min(1000, replaceDelay * 2);
+                    }
+                }
             }
             catch { }
         }

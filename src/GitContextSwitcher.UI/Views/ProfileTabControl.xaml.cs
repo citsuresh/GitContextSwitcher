@@ -523,12 +523,36 @@ namespace GitContextSwitcher.UI.Views
             try
             {
                 // If this control is showing the profile whose history was added and the history expander is open, reload
-                if (_vm != null && _vm.Profile != null && _vm.Profile.Id == e.ProfileId)
+                var vm = _vm;
+                if (vm == null || vm.Profile == null || vm.Profile.Id != e.ProfileId)
+                    return;
+
+                // Access UI element on UI thread only
+                var dsp = this.Dispatcher;
+                if (dsp != null && !dsp.CheckAccess())
                 {
-                    if (HistoryExpander.IsExpanded)
+                    dsp.Invoke(() =>
                     {
-                        _ = _vm.LoadHistoryAsync();
+                        try
+                        {
+                            if (HistoryExpander.IsExpanded)
+                            {
+                                _ = vm.LoadHistoryAsync();
+                            }
+                        }
+                        catch { }
+                    });
+                }
+                else
+                {
+                    try
+                    {
+                        if (HistoryExpander.IsExpanded)
+                        {
+                            _ = vm.LoadHistoryAsync();
+                        }
                     }
+                    catch { }
                 }
             }
             catch { }

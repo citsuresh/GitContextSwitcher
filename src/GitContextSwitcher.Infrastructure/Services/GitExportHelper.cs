@@ -229,11 +229,29 @@ namespace GitContextSwitcher.Infrastructure.Services
                     catch { }
                 }
 
-                // Write patch atomically
+                // Write patch atomically: write to temp then replace or move into place.
                 var temp = destPatchPath + ".tmp";
                 await File.WriteAllTextAsync(temp, sb.ToString()).ConfigureAwait(false);
-                File.Replace(temp, destPatchPath, null);
-                return true;
+                try
+                {
+                    if (File.Exists(destPatchPath))
+                    {
+                        // Replace will fail if destPatchPath does not exist; only call when it exists
+                        File.Replace(temp, destPatchPath, null);
+                    }
+                    else
+                    {
+                        // Destination doesn't exist - move temp into place
+                        File.Move(temp, destPatchPath);
+                    }
+                    return true;
+                }
+                catch (Exception)
+                {
+                    // If replace/move failed, attempt best-effort cleanup of temp file and rethrow
+                    try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                    throw;
+                }
             }
             catch { return false; }
         }
