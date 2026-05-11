@@ -1,0 +1,69 @@
+<Window x:Class="GitContextSwitcher.UI.Views.DiffWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:dpw="clr-namespace:DiffPlex.Wpf.Controls;assembly=DiffPlex.Wpf"
+        Title="Diff" Height="600" Width="900">
+    <Grid>
+        <DockPanel LastChildFill="True">
+            <!-- Toolbar -->
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="4" HorizontalAlignment="Right" x:Name="ToolBarPanel">
+                <Button x:Name="BtnPrevChange" Margin="4" Padding="6,2" Click="BtnPrevChange_Click" Content="Previous change" ToolTip="Previous change"/>
+                <!-- Inline view removed - side-by-side only -->
+                <Button x:Name="BtnNextChange" Margin="4" Padding="6,2" Click="BtnNextChange_Click" Content="Next change" ToolTip="Next change"/>
+                <Separator Margin="6,0"/>
+                <Button x:Name="BtnCopyLeft" Content="Copy Left Path" Margin="4" Padding="6,2" Click="BtnCopyLeft_Click"/>
+                <Button x:Name="BtnCopyRight" Content="Copy Right Path" Margin="4" Padding="6,2" Click="BtnCopyRight_Click" />
+                <Button x:Name="BtnOpenLeft" Content="Open Left" Margin="4" Padding="6,2" Click="BtnOpenLeft_Click" />
+                <Button x:Name="BtnOpenRight" Content="Open Right" Margin="4" Padding="6,2" Click="BtnOpenRight_Click" />
+                <Button x:Name="BtnClose" Content="Close" Margin="4" Padding="6,2" Click="BtnClose_Click" />
+            </StackPanel>
+
+            <!-- Side headers -->
+            <Grid DockPanel.Dock="Top" Margin="8,0,8,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="LeftHeader" Grid.Column="0" Text="" FontWeight="SemiBold" HorizontalAlignment="Left" />
+                <TextBlock Grid.Column="1" Text="" Width="12" />
+                <TextBlock x:Name="RightHeader" Grid.Column="2" Text="" FontWeight="SemiBold" HorizontalAlignment="Right" />
+            </Grid>
+
+            <!-- Inline error / fallback header (removed) -->
+
+            <!-- Diff viewer (side-by-side only) -->
+            <dpw:SideBySideDiffViewer x:Name="DiffViewer" Visibility="Collapsed" />
+        </DockPanel>
+
+        <!-- Loading overlay shown while diff is being computed -->
+        <Border x:Name="LoadingOverlay" Background="#CCFFFFFF" Visibility="Visible" Panel.ZIndex="0">
+            <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Orientation="Vertical">
+                    <Viewbox Width="48" Height="48">
+                        <Canvas Width="48" Height="48">
+                            <Ellipse Width="40" Height="40" Stroke="Gray" StrokeThickness="3" Opacity="0.3" Canvas.Left="4" Canvas.Top="4" />
+                            <Path Data="M24,4 A20,20 0 1 1 23.99,4" Stroke="DodgerBlue" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round" RenderTransformOrigin="0.5,0.5">
+                                <Path.RenderTransform>
+                                    <RotateTransform Angle="0" />
+                                </Path.RenderTransform>
+                                <Path.Triggers>
+                                    <EventTrigger RoutedEvent="Loaded">
+                                        <BeginStoryboard>
+                                            <Storyboard RepeatBehavior="Forever">
+                                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)" From="0" To="360" Duration="0:0:1" />
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </EventTrigger>
+                                </Path.Triggers>
+                            </Path>
+                        </Canvas>
+                    </Viewbox>
+                    <TextBlock x:Name="LoadingText" Text="Loading diff..." FontWeight="Bold" Margin="0,8,0,0" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <!-- Change header (appears above diff viewer if used). -->
+        <TextBlock x:Name="ChangeHeader" Text="" FontWeight="SemiBold" Margin="12" HorizontalAlignment="Left" Visibility="Collapsed" Panel.ZIndex="10" />
+    </Grid>
+</Window>

@@ -11,6 +11,13 @@ namespace GitContextSwitcher.UI.ViewModels
 {
     public class MainViewModel : BaseViewModel
     {
+        private bool _isProfilesLoading;
+        public bool IsProfilesLoading
+        {
+            get => _isProfilesLoading;
+            set => SetProperty(ref _isProfilesLoading, value);
+        }
+
         private readonly GitContextSwitcher.UI.Services.IProfileStore _store;
 
         public MainViewModel(GitContextSwitcher.UI.Services.IProfileStore store)
@@ -24,28 +31,55 @@ namespace GitContextSwitcher.UI.ViewModels
             }
             catch { }
 
-            // Try a quick synchronous load with a short timeout so saved profiles appear immediately when possible.
+            // Try a quick asynchronous load with a short timeout so saved profiles appear immediately when possible.
+            // Do not block the UI thread; populate if the quick load completes within the timeout.
             try
             {
-                var quickLoad = Task.Run(() => _store.LoadAsync());
-                if (quickLoad.Wait(300)) // 300ms quick window
+                _ = Task.Run(async () =>
                 {
-                    var quick = quickLoad.Result;
-                    if (quick != null && quick.Any())
+                    try
                     {
-                        // Populate Profiles on UI thread immediately
-                        // Detach handlers from existing VMs before clearing to avoid leaked subscriptions
-                        try { foreach (var ex in Profiles.ToList()) DetachProfileVm(ex); } catch { }
-                        Profiles.Clear();
-                        foreach (var p in quick)
+                        var quickTask = _store.LoadAsync();
+                        var finished = await Task.WhenAny(quickTask, Task.Delay(1000)).ConfigureAwait(false); // 1s quick window
+                        if (finished == quickTask)
                         {
-                            var vm = new ProfileTabViewModel(p) { IsOpen = true };
-                            AttachProfileVm(vm);
-                            Profiles.Add(vm);
+                            var quick = await quickTask.ConfigureAwait(false);
+                            if (quick != null && quick.Any())
+                            {
+                                // Populate Profiles on UI thread immediately
+                                var dsp = System.Windows.Application.Current?.Dispatcher;
+                                if (dsp != null && !dsp.CheckAccess())
+                                {
+                                    dsp.Invoke(() =>
+                                    {
+                                        try { foreach (var ex in Profiles.ToList()) DetachProfileVm(ex); } catch { }
+                                        Profiles.Clear();
+                                        foreach (var p in quick)
+                                        {
+                                            var vm = new ProfileTabViewModel(p) { IsOpen = true };
+                                            AttachProfileVm(vm);
+                                            Profiles.Add(vm);
+                                        }
+                                        SelectedProfile = Profiles.FirstOrDefault();
+                                    });
+                                }
+                                else
+                                {
+                                    try { foreach (var ex in Profiles.ToList()) DetachProfileVm(ex); } catch { }
+                                    Profiles.Clear();
+                                    foreach (var p in quick)
+                                    {
+                                        var vm = new ProfileTabViewModel(p) { IsOpen = true };
+                                        AttachProfileVm(vm);
+                                        Profiles.Add(vm);
+                                    }
+                                    SelectedProfile = Profiles.FirstOrDefault();
+                                }
+                            }
                         }
-                        SelectedProfile = Profiles.FirstOrDefault();
                     }
-                }
+                    catch { }
+                });
             }
             catch
             {
@@ -105,6 +139,17 @@ namespace GitContextSwitcher.UI.ViewModels
                 catch
                 {
                     // Dispatcher might not be available in unit tests; ignore and leave Profiles empty
+                }
+                finally
+                {
+                    // Clear loading indicator on UI thread
+                    try
+                    {
+                        var dsp = System.Windows.Application.Current?.Dispatcher;
+                        if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => IsProfilesLoading = false);
+                        else IsProfilesLoading = false;
+                    }
+                    catch { IsProfilesLoading = false; }
                 }
             });
 

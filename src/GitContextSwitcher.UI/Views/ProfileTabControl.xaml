@@ -227,7 +227,7 @@
 
                         <Grid Grid.Column="0">
                             <Grid>
-                                <TreeView x:Name="PendingTreeView" ItemsSource="{Binding FileTree}" Height="200" Visibility="{Binding HasPendingChanges, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <TreeView x:Name="PendingTreeView" ItemsSource="{Binding FileTree}" Height="200" Visibility="{Binding HasPendingChanges, Converter={StaticResource BoolToVisibilityConverter}}" MouseDoubleClick="PendingTreeView_MouseDoubleClick">
                                 <TreeView.ItemContainerStyle>
                                     <Style TargetType="TreeViewItem">
                                         <Setter Property="Padding" Value="4,2,2,2" />

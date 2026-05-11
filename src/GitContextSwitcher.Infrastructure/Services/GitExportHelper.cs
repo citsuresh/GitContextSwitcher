@@ -257,5 +257,49 @@ namespace GitContextSwitcher.Infrastructure.Services
         }
 
         private static string Quote(string s) => s.Contains(' ') ? '"' + s + '"' : s;
+
+        // Resolve a commit-ish (short SHA or ref) to a full commit SHA if possible. Returns null on failure.
+        public static async Task<string?> ResolveCommitAsync(string repoPath, string commitish)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(repoPath) || !Directory.Exists(repoPath)) return null;
+                if (string.IsNullOrWhiteSpace(commitish)) return null;
+                var (code, outp, err) = await RunGitAsync(repoPath, "rev-parse --verify " + Quote(commitish)).ConfigureAwait(false);
+                if (code != 0) return null;
+                return outp?.Trim();
+            }
+            catch { return null; }
+        }
+
+        // Attempt to fetch from remotes to ensure commits are available locally. Returns true on success.
+        public static async Task<bool> FetchAllAsync(string repoPath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(repoPath) || !Directory.Exists(repoPath)) return false;
+                var (code, outp, err) = await RunGitAsync(repoPath, "fetch --all --quiet").ConfigureAwait(false);
+                return code == 0;
+            }
+            catch { return false; }
+        }
+
+        // Get the content of a file at a specific commit-ish (e.g., HEAD or a SHA). Returns null on failure.
+        public static async Task<string?> GetFileContentAtCommitAsync(string repoPath, string commitish, string relativePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(repoPath) || !Directory.Exists(repoPath)) return null;
+                if (string.IsNullOrWhiteSpace(relativePath)) return null;
+                var args = "show " + commitish + ":" + Quote(relativePath);
+                var (code, outp, err) = await RunGitAsync(repoPath, args).ConfigureAwait(false);
+                if (code != 0) return null;
+                return outp;
+            }
+            catch
+            {
+                return null;
+            }
+        }
     }
 }

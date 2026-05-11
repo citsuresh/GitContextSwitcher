@@ -26,6 +26,311 @@ namespace GitContextSwitcher.UI.Views
             set => SetValue(HistoryCountBadgeProperty, value);
         }
 
+        private async void PendingTreeView_MouseDoubleClick(object? sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            try
+            {
+                if (_vm == null) return;
+                // Find selected tree item data
+                var tv = this.FindName("PendingTreeView") as System.Windows.Controls.TreeView;
+                if (tv == null) return;
+
+                var selected = tv.SelectedItem;
+                if (selected == null) return;
+
+                // Resolve file path from the selected tree node.
+                // The TreeView is bound to ViewModel.FileTree which contains FileTreeNode instances.
+                // FileTreeNode stores the underlying ProfileFileEntry in the Entry property (which has FilePath).
+                string? filePath = null;
+                try
+                {
+                    // If the selected item is the FileTreeNode type used in the VM, extract Entry.FilePath
+                    if (selected is ViewModels.ProfileTabViewModel.FileTreeNode node)
+                    {
+                        // Only act for leaf nodes (files). If it's a directory/group, ignore the double-click.
+                        if (node.IsDirectory)
+                        {
+                            return;
+                        }
+
+                        filePath = node.Entry?.FilePath;
+                    }
+
+                    // If selection is a ProfileFileEntry directly
+                    if (string.IsNullOrWhiteSpace(filePath) && selected is Core.Models.ProfileFileEntry directEntry)
+                    {
+                        filePath = directEntry.FilePath;
+                    }
+
+                    // Fallback: try common property names via reflection for other node shapes
+                    if (string.IsNullOrWhiteSpace(filePath))
+                    {
+                        var prop = selected.GetType().GetProperty("FilePath");
+                        if (prop != null) filePath = prop.GetValue(selected) as string;
+                    }
+                }
+                catch { }
+
+                // Hook up View Diff button for pending tree (created in XAML)
+                try
+                {
+                    var viewDiffObj = this.FindName("ViewPendingDiffButton");
+                    if (viewDiffObj is System.Windows.Controls.Button viewDiffBtn)
+                    {
+                        viewDiffBtn.Click += (s, e) =>
+                        {
+                            try
+                            {
+                                // Reuse the same handler used for double-click on the TreeView
+                                PendingTreeView_MouseDoubleClick(this, null);
+                            }
+                            catch { }
+                        };
+                    }
+                }
+                catch { }
+
+                // If we still don't have a path, ignore the double-click (user likely clicked a directory/group)
+                if (string.IsNullOrWhiteSpace(filePath)) return;
+
+                // Load old and new contents using the VM (which can provide blob contents from the repo)
+                string? oldText = null;
+                string? newText = null;
+                // If we have richer Git status (e.g., rename/old path), prefer that for the 'old' side
+                Core.Models.ProfileFileEntry? pfe = null;
+                try
+                {
+                    if (selected is ViewModels.ProfileTabViewModel.FileTreeNode node)
+                        pfe = node.Entry;
+                    else if (selected is Core.Models.ProfileFileEntry direct) pfe = direct;
+                }
+                catch { }
+
+                try
+                {
+                    // Determine which path to request for the old (left) side of the diff.
+                    // For renamed/deleted files, the old content may live at OldPath recorded in the Git change metadata.
+                    string oldRequestPath = filePath;
+                    try
+                    {
+                        var gc = pfe?.GitChange;
+                        if (gc != null)
+                        {
+                            if (gc.Kind == Core.Models.GitChangeKind.Renamed || gc.Kind == Core.Models.GitChangeKind.Deleted || gc.Kind == Core.Models.GitChangeKind.Copied)
+                            {
+                                if (!string.IsNullOrWhiteSpace(gc.OldPath)) oldRequestPath = gc.OldPath;
+                            }
+                        }
+                    }
+                    catch { }
+
+                    // Call VM helpers directly to get committed and working-tree contents
+                    try { oldText = await _vm.GetFileContentAtCommitAsync(oldRequestPath).ConfigureAwait(false); } catch { oldText = string.Empty; }
+                    try { newText = await _vm.GetWorkingTreeFileContentAsync(filePath).ConfigureAwait(false); } catch { newText = string.Empty; }
+                }
+                catch { }
+
+                // Fallback: read from disk: new = working file on disk.
+                // Guard against deleted files: don't attempt to read if the file does not exist.
+                if (string.IsNullOrWhiteSpace(newText))
+                {
+                    try
+                    {
+                        var full = System.IO.Path.Combine(_vm.RepoPath ?? string.Empty, filePath);
+                        if (System.IO.File.Exists(full))
+                        {
+                            newText = System.IO.File.ReadAllText(full);
+                        }
+                        else
+                        {
+                            // File missing from working tree (deleted) -> treat as empty working content so diff shows deletion
+                            newText = string.Empty;
+                        }
+                    }
+                    catch
+                    {
+                        newText = string.Empty;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(oldText)) oldText = string.Empty;
+
+                // If we couldn't load either side, show transient notification and abort
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(newText) && string.IsNullOrWhiteSpace(oldText))
+                    {
+                        try
+                        {
+                            _vm.ShowNotification($"Unable to load file contents: {filePath}", "Error", 4000);
+                        }
+                        catch
+                        {
+                            // Fallback to message box if VM notification unavailable
+                            var owner = Window.GetWindow(this);
+                            if (!Dispatcher.CheckAccess()) Dispatcher.Invoke(() => System.Windows.MessageBox.Show(owner, $"Unable to load file contents: {filePath}", "Load Failed", MessageBoxButton.OK, MessageBoxImage.Warning));
+                            else System.Windows.MessageBox.Show(owner, $"Unable to load file contents: {filePath}", "Load Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        }
+
+                        return;
+                    }
+                }
+                catch { }
+
+                // Size cap: if the file is large (> 1 MB) prefer external view. Use ProfileFileEntry.FileSize if available
+                try
+                {
+                    const long maxInlineBytes = 1 * 1024 * 1024; // 1 MB
+                    long? size = null;
+                    try
+                    {
+                        if (_vm.Profile?.Files != null)
+                        {
+                            var fe = _vm.Profile.Files.FirstOrDefault(f => string.Equals(f.FilePath, filePath, StringComparison.OrdinalIgnoreCase));
+                            if (fe != null) size = fe.FileSize;
+                        }
+                    }
+                    catch { }
+
+                    if (!size.HasValue)
+                    {
+                        try
+                        {
+                            var full = Path.Combine(_vm.RepoPath ?? string.Empty, filePath);
+                            if (File.Exists(full)) size = new FileInfo(full).Length;
+                        }
+                        catch { }
+                    }
+
+                    if (size.HasValue && size.Value > maxInlineBytes)
+                    {
+                        // Ask user for confirmation via VM notification pattern (simple transient message with actionable option not implemented)
+                        try { _vm.ShowNotification($"File is large ({(size.Value / 1024 / 1024.0):F2} MB). Open externally or continue?", "Warning", 6000); } catch { }
+                        // For now, do not auto-open huge diffs inline. The user can refresh or open externally.
+                        return;
+                    }
+                }
+                catch { }
+
+                // Build diff model via DiffPlex
+                try
+                {
+                    var diffBuilderType = typeof(DiffPlex.DiffBuilder.InlineDiffBuilder);
+                }
+                catch { }
+
+                // Use DiffPlex's SideBySideDiffBuilder
+                try
+                {
+                    // Build diff model on background thread and show loading UI in the window
+                    DiffWindow w = null;
+                    try
+                    {
+                        // Create and show the DiffWindow on the UI thread (must be STA)
+                        if (!Dispatcher.CheckAccess())
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                try
+                                {
+                                    w = new DiffWindow();
+                                    w.Owner = Window.GetWindow(this);
+                                    w.ShowLoading("Computing diff...");
+                                    w.Show();
+                                }
+                                catch { }
+                            });
+                        }
+                        else
+                        {
+                            w = new DiffWindow();
+                            w.Owner = Window.GetWindow(this);
+                            w.ShowLoading("Computing diff...");
+                            w.Show();
+                        }
+
+                        if (w == null)
+                        {
+                            // Could not create window on UI thread
+                            return;
+                        }
+
+                        // Compute model off the UI thread
+                        _ = Task.Run(() =>
+                        {
+                            try
+                            {
+                                var builder = new DiffPlex.DiffBuilder.SideBySideDiffBuilder(new DiffPlex.Differ());
+                                var model = builder.BuildDiffModel(oldText ?? string.Empty, newText ?? string.Empty);
+
+                                // Show a small header indicating change kind if we can infer it from profile entry
+                                try
+                                {
+                                    var changeText = string.Empty;
+                                    var gc = pfe?.GitChange;
+                                    if (gc != null)
+                                    {
+                                        switch (gc.Kind)
+                                        {
+                                            case Core.Models.GitChangeKind.Added:
+                                                changeText = "Added file";
+                                                break;
+                                            case Core.Models.GitChangeKind.Deleted:
+                                                changeText = "Deleted file";
+                                                break;
+                                            case Core.Models.GitChangeKind.Renamed:
+                                                changeText = "Renamed file" + (string.IsNullOrWhiteSpace(gc.OldPath) ? string.Empty : $" from {gc.OldPath}");
+                                                break;
+                                            case Core.Models.GitChangeKind.Copied:
+                                                changeText = "Copied file";
+                                                break;
+                                            default:
+                                                changeText = string.Empty;
+                                                break;
+                                        }
+                                    }
+
+                            var dsp = w.Dispatcher;
+                            if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() =>
+                            {
+                                try { w.ShowChangeHeader(changeText); } catch { }
+                                try { w.Title = $"Diff for {System.IO.Path.GetFileName(filePath) ?? filePath}"; } catch { }
+                            });
+                            else
+                            {
+                                try { w.ShowChangeHeader(changeText); } catch { }
+                                try { w.Title = $"Diff for {System.IO.Path.GetFileName(filePath) ?? filePath}"; } catch { }
+                            }
+                                }
+                                catch { }
+
+                                // Apply model on UI thread of the window
+                                var dsp2 = w.Dispatcher;
+                                if (dsp2 != null && !dsp2.CheckAccess()) dsp2.Invoke(() => w.SetDiffModel(model ?? new DiffPlex.DiffBuilder.Model.SideBySideDiffModel()));
+                                else w.SetDiffModel(model ?? new DiffPlex.DiffBuilder.Model.SideBySideDiffModel());
+                            }
+                            catch (Exception ex)
+                            {
+                                try
+                                {
+                                    var dsp = w.Dispatcher;
+                                    if (dsp != null && !dsp.CheckAccess()) dsp.Invoke(() => w.ShowLoading("Failed to compute diff."));
+                                    else w.ShowLoading("Failed to compute diff.");
+                                }
+                                catch { }
+                            }
+                        });
+                    }
+                    catch
+                    {
+                        try { if (w != null) { if (w.Dispatcher != null && !w.Dispatcher.CheckAccess()) w.Dispatcher.Invoke(() => w.Close()); else w.Close(); } } catch { }
+                    }
+                }
+                catch { }
+            }
+            catch { }
+        }
+
         private void OpenContextFolderButton_Click(object? sender, RoutedEventArgs e)
         {
             try
@@ -61,6 +366,8 @@ namespace GitContextSwitcher.UI.Views
                         }
                     }
                     catch { }
+
+                // Double-click subscription moved to XAML; no-op here
                 }
             }
             catch { }
@@ -233,6 +540,11 @@ namespace GitContextSwitcher.UI.Views
                             {
                                 openBtn.IsEnabled = dg.SelectedItem != null;
                             }
+                            var previewObj2 = this.FindName("PreviewContextButton");
+                            if (previewObj2 is System.Windows.Controls.Button previewBtn2)
+                            {
+                                previewBtn2.IsEnabled = dg.SelectedItem != null;
+                            }
                             // No inline preview any more; Preview button opens modal window
                         }
                         catch { }
@@ -250,6 +562,11 @@ namespace GitContextSwitcher.UI.Views
                         if (openObj2 is System.Windows.Controls.Button openBtn)
                         {
                             openBtn.IsEnabled = dg.SelectedItem != null;
+                        }
+                        var previewObj2 = this.FindName("PreviewContextButton");
+                        if (previewObj2 is System.Windows.Controls.Button previewBtn2)
+                        {
+                            previewBtn2.IsEnabled = dg.SelectedItem != null;
                         }
                     }
                     catch { }

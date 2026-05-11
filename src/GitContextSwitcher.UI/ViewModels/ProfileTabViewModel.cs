@@ -17,6 +17,35 @@ namespace GitContextSwitcher.UI.ViewModels
             public Guid ProfileId { get; set; }
         }
 
+        // Helper: get file content at a commit (e.g., HEAD) by delegating to GitExportHelper
+        public async Task<string> GetFileContentAtCommitAsync(string relativePath, string commitish = "HEAD")
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(relativePath)) return string.Empty;
+                var repo = this.RepoPath;
+                if (string.IsNullOrWhiteSpace(repo)) return string.Empty;
+                var content = await GitContextSwitcher.Infrastructure.Services.GitExportHelper.GetFileContentAtCommitAsync(repo, commitish, relativePath).ConfigureAwait(false);
+                return content ?? string.Empty;
+            }
+            catch { return string.Empty; }
+        }
+
+        // Helper: get working-tree file content
+        public async Task<string> GetWorkingTreeFileContentAsync(string relativePath)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(relativePath)) return string.Empty;
+                var repo = this.RepoPath;
+                if (string.IsNullOrWhiteSpace(repo)) return string.Empty;
+                var full = Path.Combine(repo, relativePath);
+                if (!File.Exists(full)) return string.Empty;
+                return await File.ReadAllTextAsync(full).ConfigureAwait(false);
+            }
+            catch { return string.Empty; }
+        }
+
         // Semaphore to prevent concurrent context saves for this profile
         private readonly SemaphoreSlim _saveContextSemaphore = new SemaphoreSlim(1, 1);
 

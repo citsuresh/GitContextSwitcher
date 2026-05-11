@@ -223,6 +223,43 @@ namespace GitContextSwitcher.UI.ViewModels
             set => SetProperty(ref _filePreview, value);
         }
 
+        private string? _diffOld;
+        public string? DiffOld
+        {
+            get => _diffOld;
+            set => SetProperty(ref _diffOld, value);
+        }
+
+        private string? _diffNew;
+        public string? DiffNew
+        {
+            get => _diffNew;
+            set => SetProperty(ref _diffNew, value);
+        }
+        private string? _diffOldPath;
+        public string? DiffOldPath
+        {
+            get => _diffOldPath;
+            set => SetProperty(ref _diffOldPath, value);
+        }
+
+        private string? _diffNewPath;
+        public string? DiffNewPath
+        {
+            get => _diffNewPath;
+            set => SetProperty(ref _diffNewPath, value);
+        }
+
+        private bool _showRepoLeftWarning;
+        /// <summary>
+        /// When true, UI should display a warning that the left side is sourced from the repository path and may contain local changes.
+        /// </summary>
+        public bool ShowRepoLeftWarning
+        {
+            get => _showRepoLeftWarning;
+            set => SetProperty(ref _showRepoLeftWarning, value);
+        }
+
         private bool _isLoading;
         public bool IsLoading
         {
@@ -239,6 +276,11 @@ namespace GitContextSwitcher.UI.ViewModels
 
         // Max preview bytes to read
         private const int MaxPreviewBytes = 200 * 1024; // 200 KB
+        private System.Threading.CancellationTokenSource? _loadCts;
+        private int _generation;
+
+        // Expose a monotonically-increasing generation id to help the view ignore stale diff models
+        public int DiffGeneration => _generation;
 
         public async Task LoadAsync()
         {
@@ -446,21 +488,147 @@ namespace GitContextSwitcher.UI.ViewModels
             if (SelectedNode == null || SelectedNode.IsDirectory)
             {
                 FilePreview = null;
+                DiffOld = null;
+                DiffNew = null;
+                ShowRepoLeftWarning = false;
                 return;
             }
+            // Cancel any previous outstanding load and create a new token for this request
+            try
+            {
+                _loadCts?.Cancel();
+            }
+            catch { }
+            _loadCts = new System.Threading.CancellationTokenSource();
+            var cts = _loadCts;
+            var token = cts.Token;
+            var myGeneration = System.Threading.Interlocked.Increment(ref _generation);
 
             try
             {
                 IsLoading = true;
                 IsTruncated = false;
+                ShowRepoLeftWarning = false;
                 var fileName = System.IO.Path.GetFileName(SelectedNode.FullPath ?? string.Empty);
-                var (content, truncated) = await _mgr.ReadContextFileContentAsync(_profileId, _context.Id, fileName, MaxPreviewBytes).ConfigureAwait(false);
+                // Read the exported 'new' file content directly from the saved-context folder using the full path when available.
+                string? content = null;
+                bool truncated = false;
+                try
+                {
+                    var fullPath = SelectedNode.FullPath;
+                    if (!string.IsNullOrWhiteSpace(fullPath) && System.IO.File.Exists(fullPath))
+                    {
+                        // Read up to MaxPreviewBytes characters safely from the file on disk
+                        try
+                        {
+                            using var fs = System.IO.File.Open(fullPath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.Read);
+                            using var sr = new System.IO.StreamReader(fs);
+                            var buffer = new char[MaxPreviewBytes + 1];
+                            var read = await sr.ReadBlockAsync(buffer, 0, MaxPreviewBytes + 1).ConfigureAwait(false);
+                            if (read <= MaxPreviewBytes)
+                            {
+                                content = new string(buffer, 0, read);
+                                truncated = false;
+                            }
+                            else
+                            {
+                                content = new string(buffer, 0, MaxPreviewBytes);
+                                truncated = true;
+                            }
+                        }
+                        catch
+                        {
+                            // Fall back to helper if direct read fails
+                            var tup = await _mgr.ReadContextFileContentAsync(_profileId, _context.Id, fileName, MaxPreviewBytes).ConfigureAwait(false);
+                            content = tup.Item1;
+                            truncated = tup.Item2;
+                        }
+                    }
+                    else
+                    {
+                        var tup = await _mgr.ReadContextFileContentAsync(_profileId, _context.Id, fileName, MaxPreviewBytes).ConfigureAwait(false);
+                        content = tup.Item1;
+                        truncated = tup.Item2;
+                    }
+                }
+                catch
+                {
+                    content = null;
+                    truncated = false;
+                }
+
+                // For diff preview: treat 'content' as the new/working content. Attempt to load old content from repository if available.
                 FilePreview = content;
                 IsTruncated = truncated;
+
+                // Load 'new' content is the exported file from the saved context (already in 'content').
+                // For 'old' content, show the local repository working-tree file (may include local changes).
+                string? oldContent = null;
+                string? sel = null;
+                try
+                {
+                    var ctxFolder = System.IO.Path.Combine(AppPaths.GetProfileFolder(_profileId), "SavedContexts", _context.Id.ToString());
+                    // Compute relative path from context folder and map to repo-relative path.
+                    string repoRelative = fileName;
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(SelectedNode?.FullPath) && System.IO.Directory.Exists(ctxFolder))
+                        {
+                            var rel = System.IO.Path.GetRelativePath(ctxFolder, SelectedNode!.FullPath!);
+                            var parts = rel.Split(new[] { System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+                            if (parts.Length > 0 && string.Equals(parts[0], "WithHierarchy", StringComparison.OrdinalIgnoreCase) && parts.Length > 1)
+                            {
+                                repoRelative = System.IO.Path.Combine(parts.Skip(1).ToArray());
+                            }
+                            else if (parts.Length > 0 && string.Equals(parts[0], "Flat", StringComparison.OrdinalIgnoreCase))
+                            {
+                                // Flat export: best-effort use fileName only
+                                repoRelative = fileName;
+                            }
+                            else
+                            {
+                                // Fallback: use rel directly
+                                repoRelative = rel;
+                            }
+                        }
+                    }
+                    catch { repoRelative = fileName; }
+
+                    // Load profile to get repo path
+                    try
+                    {
+                        var profile = await _mgr.LoadProfileAsync(_profileId).ConfigureAwait(false);
+                        var repoPath = profile?.RepoPath;
+                        if (!string.IsNullOrWhiteSpace(repoPath))
+                        {
+                            var candidate = System.IO.Path.Combine(repoPath, repoRelative ?? string.Empty);
+                            if (System.IO.File.Exists(candidate))
+                            {
+                                oldContent = await System.IO.File.ReadAllTextAsync(candidate).ConfigureAwait(false);
+                                sel = candidate;
+                                ShowRepoLeftWarning = true;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                catch { oldContent = null; }
+
+                DiffOld = oldContent ?? string.Empty;
+                DiffNew = content ?? string.Empty;
+                DiffOldPath = sel;
+                DiffNewPath = SelectedNode?.FullPath;
+
+                // Notify listeners that a new diff generation is ready. _generation was already incremented
+                // at the start of this load; raise the property changed so the view can capture texts and build the model.
+                try { OnPropertyChanged(nameof(DiffGeneration)); } catch { }
             }
             catch
             {
                 FilePreview = "(failed to load file preview)";
+                DiffOld = null;
+                DiffNew = null;
+                ShowRepoLeftWarning = false;
             }
             finally { IsLoading = false; }
         }
