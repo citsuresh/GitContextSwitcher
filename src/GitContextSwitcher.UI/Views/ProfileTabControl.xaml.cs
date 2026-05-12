@@ -26,6 +26,62 @@ namespace GitContextSwitcher.UI.Views
             set => SetValue(HistoryCountBadgeProperty, value);
         }
 
+        private void PendingTreeView_SelectedItemChanged(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var tv = this.FindName("PendingTreeView") as System.Windows.Controls.TreeView;
+                if (tv == null) return;
+                var viewBtn = this.FindName("ViewPendingDiffButton") as System.Windows.Controls.Button;
+                var headerBtn = this.FindName("ViewPendingDiffHeaderButton") as System.Windows.Controls.Button;
+                bool enabled = false;
+                var sel = tv.SelectedItem;
+                if (sel != null)
+                {
+                    if (sel is ViewModels.ProfileTabViewModel.FileTreeNode fn)
+                    {
+                        enabled = !fn.IsDirectory;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var prop = sel.GetType().GetProperty("IsDirectory");
+                            if (prop != null)
+                            {
+                                var val = prop.GetValue(sel);
+                                if (val is bool b) enabled = !b;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+                if (viewBtn != null) viewBtn.IsEnabled = enabled;
+                if (headerBtn != null) headerBtn.IsEnabled = enabled;
+            }
+            catch { }
+        }
+
+        private void ViewDiffButton_Click(object? sender, RoutedEventArgs? e)
+        {
+            try
+            {
+                // Delegate to the same handler used for double-click so behavior is identical
+                PendingTreeView_MouseDoubleClick(this, null);
+            }
+            catch { }
+        }
+
+        private void ViewPendingHeaderButton_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // If there is a selection in the PendingTreeView, reuse the double-click handler
+                PendingTreeView_MouseDoubleClick(this, null);
+            }
+            catch { }
+        }
+
         private async void PendingTreeView_MouseDoubleClick(object? sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             try
@@ -86,6 +142,79 @@ namespace GitContextSwitcher.UI.Views
                             }
                             catch { }
                         };
+                    }
+                }
+                catch { }
+
+                // Enable/disable View Diff buttons based on PendingTreeView selection (only leaf file nodes enable)
+                try
+                {
+                    var tvObj = this.FindName("PendingTreeView") as System.Windows.Controls.TreeView;
+                    if (tvObj != null)
+                    {
+                        tvObj.SelectedItemChanged += (s, ev) =>
+                        {
+                            try
+                            {
+                                var viewBtn = this.FindName("ViewPendingDiffButton") as System.Windows.Controls.Button;
+                                var headerBtn = this.FindName("ViewPendingDiffHeaderButton") as System.Windows.Controls.Button;
+                                bool enabled = false;
+                                var sel = tvObj.SelectedItem;
+                                if (sel != null)
+                                {
+                                    if (sel is ViewModels.ProfileTabViewModel.FileTreeNode fn)
+                                    {
+                                        enabled = !fn.IsDirectory;
+                                    }
+                                    else
+                                    {
+                                        // Try to infer via an IsDirectory property if present
+                                        try
+                                        {
+                                            var prop = sel.GetType().GetProperty("IsDirectory");
+                                            if (prop != null)
+                                            {
+                                                var val = prop.GetValue(sel);
+                                                if (val is bool b) enabled = !b;
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                                if (viewBtn != null) viewBtn.IsEnabled = enabled;
+                                if (headerBtn != null) headerBtn.IsEnabled = enabled;
+                            }
+                            catch { }
+                        };
+
+                        // Initialize buttons state
+                        try
+                        {
+                            var viewBtnInit = this.FindName("ViewPendingDiffButton") as System.Windows.Controls.Button;
+                            var headerBtnInit = this.FindName("ViewPendingDiffHeaderButton") as System.Windows.Controls.Button;
+                            bool initEnabled = false;
+                            var selInit = tvObj.SelectedItem;
+                            if (selInit != null)
+                            {
+                                if (selInit is ViewModels.ProfileTabViewModel.FileTreeNode fn2) initEnabled = !fn2.IsDirectory;
+                                else
+                                {
+                                    try
+                                    {
+                                        var prop = selInit.GetType().GetProperty("IsDirectory");
+                                        if (prop != null)
+                                        {
+                                            var val = prop.GetValue(selInit);
+                                            if (val is bool b2) initEnabled = !b2;
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                            if (viewBtnInit != null) viewBtnInit.IsEnabled = initEnabled;
+                            if (headerBtnInit != null) headerBtnInit.IsEnabled = initEnabled;
+                        }
+                        catch { }
                     }
                 }
                 catch { }

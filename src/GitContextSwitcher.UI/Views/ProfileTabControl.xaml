@@ -215,6 +215,13 @@
                                 <TextBlock Text="{Binding UnstagedChangesCount}" d:Text="0" Style="{StaticResource CountBadgeTextStyle}" />
                             </StackPanel>
                         </Border>
+                        <!-- Quick View Diff button for selected pending file -->
+                        <Button x:Name="ViewPendingDiffHeaderButton" Width="92" Height="22" Margin="8,0,0,0" Style="{StaticResource InlineIconButtonStyle}" ToolTip="View diff for selected pending file" Click="ViewPendingHeaderButton_Click" Visibility="{Binding HasPendingChanges, Converter={StaticResource BoolToVisibilityConverter}}" IsEnabled="False">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="🔍" FontSize="13" Margin="0,0,6,0" />
+                                <TextBlock Text="View Diff" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
                 </Expander.Header>
 
@@ -227,7 +234,7 @@
 
                         <Grid Grid.Column="0">
                             <Grid>
-                                <TreeView x:Name="PendingTreeView" ItemsSource="{Binding FileTree}" Height="200" Visibility="{Binding HasPendingChanges, Converter={StaticResource BoolToVisibilityConverter}}" MouseDoubleClick="PendingTreeView_MouseDoubleClick">
+                                <TreeView x:Name="PendingTreeView" ItemsSource="{Binding FileTree}" Height="200" Visibility="{Binding HasPendingChanges, Converter={StaticResource BoolToVisibilityConverter}}" MouseDoubleClick="PendingTreeView_MouseDoubleClick" SelectedItemChanged="PendingTreeView_SelectedItemChanged">
                                 <TreeView.ItemContainerStyle>
                                     <Style TargetType="TreeViewItem">
                                         <Setter Property="Padding" Value="4,2,2,2" />
