@@ -48,6 +48,7 @@ graph LR
 | `ProfileTabViewModel` | ViewModels/ProfileTabViewModel.cs | Per-profile tab VM: repo info, pending changes tree, save/delete context, history log. |
 | `PreviewViewModel` | ViewModels/PreviewViewModel.cs | Saved-context preview/diff VM: loads file tree + diff content for a `SavedWorkContext`. |
 | `BaseViewModel` | ViewModels/BaseViewModel.cs | `INotifyPropertyChanged` base + `SetProperty` helper. |
+| `GitChangeKindDisplay` | ViewModels/GitChangeKindDisplay.cs | Shared static helper for `GitChangeKind` display (icon glyph, icon brush, suffix text), used by both `PreviewViewModel.FileTreeNode` and `ProfileTabViewModel.FileTreeNode` to avoid duplicated switch expressions. |
 | `RelayCommand` | ViewModels/RelayCommand.cs | `ICommand` implementation for MVVM bindings. |
 | `ProfileStorageManager` | Services/ProfileStorageManager.cs | Reads/writes profile + saved-context files on disk (per-profile folder layout). |
 | `AppPaths` | Services/AppPaths.cs | Resolves `%LocalAppData%\GitContextSwitcher\...` paths per profile. |

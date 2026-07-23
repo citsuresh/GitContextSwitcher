@@ -1035,65 +1035,18 @@ namespace GitContextSwitcher.UI.ViewModels
             // Controls whether the corresponding TreeViewItem should be expanded. Default true to expand all nodes after build.
             public bool IsExpanded { get; set; } = true;
 
-            // Small glyph/icon representing the change kind (uses simple glyphs to avoid asset dependencies)
-            public string DisplayIcon
-            {
-                get
-                {
-                    if (Entry?.GitChange == null) return string.Empty;
-                    return Entry.GitChange.Kind switch
-                    {
-                        Core.Models.GitChangeKind.Added => "➕",
-                        Core.Models.GitChangeKind.Modified => "✏️",
-                        Core.Models.GitChangeKind.Deleted => "🗑️",
-                        Core.Models.GitChangeKind.Renamed => "🔀",
-                        Core.Models.GitChangeKind.Copied => "📄",
-                        Core.Models.GitChangeKind.TypeChange => "🔧",
-                        Core.Models.GitChangeKind.Unmerged => "⚠️",
-                        Core.Models.GitChangeKind.Untracked => "❓",
-                        _ => "•",
-                    };
-                }
-            }
+            // Small glyph/icon representing the change kind (uses simple glyphs to avoid asset dependencies).
+            // Shared with PreviewViewModel.FileTreeNode via GitChangeKindDisplay.
+            public string DisplayIcon => GitChangeKindDisplay.GetPendingDisplayIcon(Entry?.GitChange?.Kind);
 
             // Brush used to color the icon glyph
-            public System.Windows.Media.Brush IconBrush
-            {
-                get
-                {
-                    if (Entry?.GitChange == null) return System.Windows.Media.Brushes.Gray;
-                    return Entry.GitChange.Kind switch
-                    {
-                        Core.Models.GitChangeKind.Added => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2E, 0x8B, 0x57)), // SeaGreen
-                        Core.Models.GitChangeKind.Modified => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0x8C, 0x00)), // DarkOrange
-                        Core.Models.GitChangeKind.Deleted => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC6, 0x28, 0x28)), // Red
-                        Core.Models.GitChangeKind.Renamed => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x6A, 0x1B, 0x9A)), // Purple
-                        Core.Models.GitChangeKind.Copied => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x00, 0x79, 0x6B)), // Teal
-                        Core.Models.GitChangeKind.TypeChange => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x19, 0x76, 0xD2)), // Blue
-                        Core.Models.GitChangeKind.Unmerged => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF5, 0x7C, 0x00)), // Orange
-                        Core.Models.GitChangeKind.Untracked => System.Windows.Media.Brushes.Gray,
-                        _ => System.Windows.Media.Brushes.Gray,
-                    };
-                }
-            }
+            public System.Windows.Media.Brush IconBrush => GitChangeKindDisplay.GetIconBrush(Entry?.GitChange?.Kind);
 
             // Display name remains separate from icon/suffix concerns and includes suffix when present
             public string DisplayName => Name + DisplaySuffix;
 
             // Suffix text such as (Modified, Staged) shown in gray next to the name
-            public string DisplaySuffix
-            {
-                get
-                {
-                    if (Entry == null || Entry.GitChange == null) return string.Empty;
-                    var gc = Entry.GitChange;
-                    // Only show the change kind (Added/Modified/Deleted/Renamed/Copied/TypeChange/Unmerged/Untracked).
-                    // Do not show staged/unstaged in the suffix; grouping handles that.
-                    if (gc.Kind == Core.Models.GitChangeKind.Unknown) return string.Empty;
-                    var kindLabel = gc.Kind == Core.Models.GitChangeKind.Untracked ? "Untracked" : gc.Kind.ToString();
-                    return $" ({kindLabel})";
-                }
-            }
+            public string DisplaySuffix => GitChangeKindDisplay.GetPendingDisplaySuffix(Entry?.GitChange?.Kind);
 
             // Tooltip text (raw porcelain token) for diagnostics
             public string? ToolTipText => Entry?.GitChange?.Raw;

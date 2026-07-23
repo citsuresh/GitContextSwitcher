@@ -4,32 +4,33 @@
 > tasks, and recently changed files as of the last session.
 
 ## Current Focus
-Bootstrapped persistent project memory (this `docs/` folder) and completed the
-`PreviewViewModel.LoadAsync()` Dispatcher-thread fix. All four memory files exist, the
-"Persistent Project Memory" section was added to `.github/copilot-instructions.md`, and the
-`docs/*.md` files are registered under a "Solution Items" solution folder in
-`GitContextSwitcher.sln`.
+User verified the 4 previously-open items are working fine (View Diff button enablement, preview
+window, PreviewContextButton state, full solution build). Just completed: extracted duplicated
+`GitChangeKind` icon/brush/suffix display logic from `PreviewViewModel.FileTreeNode` and
+`ProfileTabViewModel.FileTreeNode` into a shared `GitChangeKindDisplay` static helper. Next up:
+implement roadmap item to make the saved-context preview left-side diff source from repo
+HEAD/blob instead of the local working tree.
 
 ## Open Tasks / Known Issues
-- Verify the pending-changes tree "View Diff" buttons (`ViewPendingDiffButton`,
-  `ViewPendingDiffHeaderButton` in `ProfileTabControl.xaml`/`.xaml.cs`) reliably disable when no
-  node or a parent (directory) node is selected — user reported this was not always correct.
-- Re-test the saved-context preview window end-to-end after the Dispatcher-thread fix to confirm
-  the diff loads correctly with no more thread-affinity exceptions.
-- Confirm `PreviewContextButton` (saved-contexts grid) enable/disable state is correct alongside
-  Open/Delete buttons.
-- Re-run `run_build` on the full solution once the current debug session ends, to confirm the
-  solution still loads/builds cleanly with the new "Solution Items" folder in the `.sln`.
+- Implement preview left-side diff sourced from repo HEAD/blob (via `git show <sha>:<path>`)
+  instead of local working tree, with graceful fallback (to current local-path + warning banner
+  behavior) if the stored commit SHA no longer exists in the repo (e.g. after rebase/GC), and
+  correct handling for Added (not present at HEAD) / Deleted (present at HEAD, absent now) files.
 
 ## Recently Changed Files
-- `src/GitContextSwitcher.UI/ViewModels/PreviewViewModel.cs` — `LoadAsync()` Dispatcher-thread
-  guard + removed `ConfigureAwait(false)` before UI collection mutations.
+- `src/GitContextSwitcher.UI/ViewModels/GitChangeKindDisplay.cs` — new shared static helper for
+  `GitChangeKind` icon/brush/suffix display logic.
+- `src/GitContextSwitcher.UI/ViewModels/PreviewViewModel.cs` — `FileTreeNode` display properties
+  now delegate to `GitChangeKindDisplay`; earlier also received the `LoadAsync()`
+  Dispatcher-thread guard + removed `ConfigureAwait(false)` before UI collection mutations.
+- `src/GitContextSwitcher.UI/ViewModels/ProfileTabViewModel.cs` — `FileTreeNode` display
+  properties now delegate to `GitChangeKindDisplay`.
 - `.github/copilot-instructions.md` — added git commit/push email guidance and the Persistent
   Project Memory section.
 - `.github/prompts/bootstrap-project-memory.prompt.md`, `.github/prompts/end-session.prompt.md`
   — bootstrap prompt files copied into the repo.
 - `docs/CODE_SUMMARY.md`, `docs/DESIGN_DECISIONS.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`
-  — created/updated as part of project memory bootstrap.
+  — created/updated as part of project memory bootstrap and this refactor.
 - `GitContextSwitcher.sln` — added a "Solution Items" solution folder referencing the four
   `docs/*.md` files.
 

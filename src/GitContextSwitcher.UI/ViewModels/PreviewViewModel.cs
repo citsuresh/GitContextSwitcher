@@ -62,67 +62,14 @@ namespace GitContextSwitcher.UI.ViewModels
                 }
             }
 
-            // Properties used by Pending changes tree template
-            public string DisplayIcon
-            {
-                get
-                {
-                    // Directories keep the triangle glyph; unknown file change types show a question glyph
-                    if (IsDirectory) return "▸";
-                    if (ChangeType == GitContextSwitcher.Core.Models.GitChangeKind.Unknown) return "❓";
+            // Properties used by Pending changes tree template.
+            // Icon/brush/suffix logic is shared with ProfileTabViewModel.FileTreeNode via GitChangeKindDisplay.
+            public string DisplayIcon => GitChangeKindDisplay.GetDisplayIcon(ChangeType, IsDirectory);
 
-                    return ChangeType switch
-                    {
-                        GitContextSwitcher.Core.Models.GitChangeKind.Added => "➕",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Modified => "✏️",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Deleted => "🗑️",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Renamed => "🔀",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Copied => "📄",
-                        GitContextSwitcher.Core.Models.GitChangeKind.TypeChange => "🔧",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Unmerged => "⚠️",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Untracked => "❓",
-                        _ => "❓",
-                    };
-                }
-            }
+            public System.Windows.Media.Brush IconBrush => GitChangeKindDisplay.GetIconBrush(ChangeType);
 
-            public System.Windows.Media.Brush IconBrush
-            {
-                get
-                {
-                    return ChangeType switch
-                    {
-                        GitContextSwitcher.Core.Models.GitChangeKind.Added => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x2E, 0x8B, 0x57)), // SeaGreen
-                        GitContextSwitcher.Core.Models.GitChangeKind.Modified => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFF, 0x8C, 0x00)), // DarkOrange
-                        GitContextSwitcher.Core.Models.GitChangeKind.Deleted => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC6, 0x28, 0x28)), // Red
-                        GitContextSwitcher.Core.Models.GitChangeKind.Renamed => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x6A, 0x1B, 0x9A)), // Purple
-                        GitContextSwitcher.Core.Models.GitChangeKind.Copied => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x00, 0x79, 0x6B)), // Teal
-                        GitContextSwitcher.Core.Models.GitChangeKind.TypeChange => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x19, 0x76, 0xD2)), // Blue
-                        GitContextSwitcher.Core.Models.GitChangeKind.Unmerged => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF5, 0x7C, 0x00)), // Orange
-                        GitContextSwitcher.Core.Models.GitChangeKind.Untracked => System.Windows.Media.Brushes.Gray,
-                        _ => System.Windows.Media.Brushes.Gray,
-                    };
-                }
-            }
             // Include a suffix like (Modified) to match the Pending changes tree style
-            public string DisplaySuffix
-            {
-                get
-                {
-                    return ChangeType switch
-                    {
-                        GitContextSwitcher.Core.Models.GitChangeKind.Added => " (Added)",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Modified => " (Modified)",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Deleted => " (Deleted)",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Renamed => " (Renamed)",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Copied => " (Copied)",
-                        GitContextSwitcher.Core.Models.GitChangeKind.TypeChange => " (TypeChange)",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Unmerged => " (Unmerged)",
-                        GitContextSwitcher.Core.Models.GitChangeKind.Untracked => " (Untracked)",
-                        _ => string.Empty,
-                    };
-                }
-            }
+            public string DisplaySuffix => GitChangeKindDisplay.GetDisplaySuffix(ChangeType);
 
             public string DisplayName => Name + DisplaySuffix;
 
