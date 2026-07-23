@@ -284,6 +284,17 @@ namespace GitContextSwitcher.UI.ViewModels
 
         public async Task LoadAsync()
         {
+            // ObservableCollection instances bound to WPF CollectionViews (Files, FileTree, and
+            // FileTreeNode.Children) can only be mutated on the Dispatcher thread. If this method is
+            // invoked from a background thread (e.g. fire-and-forget from code-behind), marshal the
+            // whole load onto the UI thread before touching any collections.
+            var dispatcher = System.Windows.Application.Current?.Dispatcher;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                await dispatcher.InvokeAsync(LoadAsync).Task.Unwrap().ConfigureAwait(true);
+                return;
+            }
+
             try
             {
                 IsLoading = true;
@@ -301,7 +312,9 @@ namespace GitContextSwitcher.UI.ViewModels
                 // Read context.json into ContextJson property (show in header area)
                 try
                 {
-                    var (ctxJson, ctxTruncated) = await _mgr.ReadContextFileContentAsync(_profileId, _context.Id, "context.json", MaxPreviewBytes).ConfigureAwait(false);
+                    // Do not ConfigureAwait(false) here: the remainder of LoadAsync mutates UI-bound
+                    // ObservableCollections (Files/FileTree/node.Children) and must resume on the UI thread.
+                    var (ctxJson, ctxTruncated) = await _mgr.ReadContextFileContentAsync(_profileId, _context.Id, "context.json", MaxPreviewBytes);
                     ContextJson = ctxJson ?? string.Empty;
                     ContextJsonTruncated = ctxTruncated;
                     // Build property grid from context.json
@@ -309,7 +322,7 @@ namespace GitContextSwitcher.UI.ViewModels
                 }
                 catch { ContextJson = null; ContextJsonTruncated = false; }
 
-                var list = await _mgr.ListContextFilesAsync(_profileId, _context.Id).ConfigureAwait(false);
+                var list = await _mgr.ListContextFilesAsync(_profileId, _context.Id);
                 if (list != null)
                 {
                     // Build a simple change-type lookup from context.json if present
