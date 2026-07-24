@@ -522,7 +522,12 @@ namespace GitContextSwitcher.UI.ViewModels
                 IsTruncated = truncated;
 
                 // Load 'new' content is the exported file from the saved context (already in 'content').
-                // For 'old' content, show the local repository working-tree file (may include local changes).
+                // For 'old' content, prefer the repository HEAD blob as of when the context was saved
+                // (git show <headShortSha>:<repoRelative>), since that reflects the actual base the
+                // saved context was diffed against. Fall back to the local working-tree file (with a
+                // warning banner, since it may contain local changes) if the commit is unavailable
+                // (e.g. the repo was rebased/GC'd since the context was saved) or the file did not
+                // exist at that commit (e.g. it was Added since HEAD).
                 string? oldContent = null;
                 string? sel = null;
                 try
@@ -561,12 +566,38 @@ namespace GitContextSwitcher.UI.ViewModels
                         var repoPath = profile?.RepoPath;
                         if (!string.IsNullOrWhiteSpace(repoPath))
                         {
-                            var candidate = System.IO.Path.Combine(repoPath, repoRelative ?? string.Empty);
-                            if (System.IO.File.Exists(candidate))
+                            var repoRelativeFwd = repoRelative?.Replace(System.IO.Path.DirectorySeparatorChar, '/');
+
+                            // 1) Try repo HEAD (as of when the context was saved) via git show <sha>:<path>.
+                            if (!string.IsNullOrWhiteSpace(HeadShortSha) && !string.IsNullOrWhiteSpace(repoRelativeFwd))
                             {
-                                oldContent = await System.IO.File.ReadAllTextAsync(candidate).ConfigureAwait(false);
-                                sel = candidate;
-                                ShowRepoLeftWarning = true;
+                                try
+                                {
+                                    var headContent = await GitContextSwitcher.Infrastructure.Services.GitExportHelper
+                                        .GetFileContentAtCommitAsync(repoPath, HeadShortSha!, repoRelativeFwd!)
+                                        .ConfigureAwait(false);
+                                    if (headContent != null)
+                                    {
+                                        oldContent = headContent;
+                                        sel = $"{HeadShortSha}:{repoRelativeFwd}";
+                                        ShowRepoLeftWarning = false;
+                                    }
+                                }
+                                catch { }
+                            }
+
+                            // 2) Fall back to the local working-tree file if the commit blob is unavailable
+                            // (e.g. commit no longer reachable, or file didn't exist at that commit, such as
+                            // a newly Added file). This may contain local changes, hence the warning banner.
+                            if (oldContent == null)
+                            {
+                                var candidate = System.IO.Path.Combine(repoPath, repoRelative ?? string.Empty);
+                                if (System.IO.File.Exists(candidate))
+                                {
+                                    oldContent = await System.IO.File.ReadAllTextAsync(candidate).ConfigureAwait(false);
+                                    sel = candidate;
+                                    ShowRepoLeftWarning = true;
+                                }
                             }
                         }
                     }
