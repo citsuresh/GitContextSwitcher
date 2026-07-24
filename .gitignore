@@ -19,8 +19,6 @@ $RECYCLE.BIN/
 .idea/
 *.sln.iml
 
-# Copilot instructions
-copilot-instructions.md
 # Visual Studio Code
 .vscode/
 # Test results
