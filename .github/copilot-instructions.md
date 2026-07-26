@@ -6,6 +6,18 @@
   exploration — their absence is not an error.
 - When the user asks "do you remember", references prior work, or asks what's next, read
   `docs/PROJECT_STATE.md` and `docs/ROADMAP.md`.
+- `docs/full-graph.json`/`docs/project-dependencies.json` are available and should be queried via
+  `GraphTools.Query.exe` (never read wholesale). This is a default, not a judgment call: before
+  using a general-purpose search tool (text search, symbol search, grep, or similar) to locate a
+  class/interface/enum, find a method's definition, find its callers, find its callees, check how
+  two types relate, or otherwise answer "where is X" / "what uses X" for anything that is a C#
+  symbol, first check whether `docs/full-graph.json` exists in this project, and if so, query it
+  via `GraphTools.Query.exe` instead of a general search tool. This applies even to a simple "find
+  this file/class" request, not only explicit call-graph or architecture questions.
+  Fallback: if `docs/full-graph.json` does not exist, if `GraphTools.Query.exe` errors or exits
+  non-zero, or if the graph doesn't contain an answer to the specific question (e.g. the question
+  is about non-code content, file layout, or something the graph doesn't track), fall back to
+  normal search tools and proceed — do not treat a missing/failed graph query as a blocking error.
 - Update `docs/CODE_SUMMARY.md` when: a new project is added, a new structural class/service is
   added, a component's responsibility changes, or a project/component dependency changes. Do not
   update for routine bug fixes or small edits that don't affect structure.
