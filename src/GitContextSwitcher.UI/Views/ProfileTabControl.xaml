@@ -5,6 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:GitContextSwitcher.UI.Views;assembly=GitContextSwitcher.UI"
+             xmlns:converters="clr-namespace:GitContextSwitcher.UI.Converters"
 
              mc:Ignorable="d"
              d:DesignHeight="600" d:DesignWidth="1100"
@@ -15,6 +16,7 @@
                 <ResourceDictionary Source="../Themes/SharedStyles.xaml" />
             </ResourceDictionary.MergedDictionaries>
             <!-- ObjectToBoolConverter removed from XAML; selection enable-binding handled in code-behind -->
+            <converters:UtcToLocalDateTimeConverter x:Key="UtcToLocalDateTimeConverter" />
             <!-- Unified style for the bordered expander sections so collapsed spacing is consistent -->
             <Style x:Key="SectionBorderStyle" TargetType="Border">
                 <Setter Property="BorderBrush" Value="#FFDDDDDD" />
@@ -365,7 +367,7 @@
                         <Grid Grid.Row="2">
                             <DataGrid x:Name="SavedContextsGrid" ItemsSource="{Binding SavedContexts}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"  CanUserResizeColumns="True" CanUserReorderColumns="True"  HeadersVisibility="Column" SelectionMode="Single" RowHeaderWidth="0" MinHeight="80" MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalAlignment="Stretch">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn CanUserResize="True" Header="Created" Binding="{Binding CreatedAt, StringFormat={}{0:G}}" Width="160" MinWidth="140" />
+                                    <DataGridTextColumn CanUserResize="True" Header="Created" Binding="{Binding CreatedAt, Converter={StaticResource UtcToLocalDateTimeConverter}, StringFormat={}{0:G}}" Width="160" MinWidth="140" />
                                     <DataGridTextColumn CanUserResize="True" Header="ID" Binding="{Binding Id}" MinWidth="260" />
                                     <DataGridTemplateColumn CanUserResize="True" Header="Description" MinWidth="200">
                                         <DataGridTemplateColumn.CellTemplate>
@@ -475,7 +477,7 @@
                                       CanUserReorderColumns="True"
                                       VerticalScrollBarVisibility="Auto">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn CanUserResize="True" Header="Timestamp" Binding="{Binding Timestamp, StringFormat={}{0:G}}" Width="180" MinWidth="140" />
+                                    <DataGridTextColumn CanUserResize="True" Header="Timestamp" Binding="{Binding Timestamp, Converter={StaticResource UtcToLocalDateTimeConverter}, StringFormat={}{0:G}}" Width="180" MinWidth="140" />
                                     <DataGridTextColumn CanUserResize="True" Header="Action" Binding="{Binding Action}" Width="160" MinWidth="120" />
                                     <DataGridTemplateColumn CanUserResize="True" Header="Notes" Width="*" MinWidth="160">
                                         <DataGridTemplateColumn.CellTemplate>

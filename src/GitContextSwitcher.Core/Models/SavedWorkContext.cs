@@ -45,5 +45,10 @@ namespace GitContextSwitcher.Core.Models
     {
         public string? Path { get; set; }
         public string? Change { get; set; }
+
+        // Whether this file was staged (in the index) at the time the context was saved.
+        // Only reliably known when captured via IGitService; patch-parsing/export fallbacks
+        // leave this false (treated as unstaged), matching the pending-changes tree's default.
+        public bool IsStaged { get; set; }
     }
 }

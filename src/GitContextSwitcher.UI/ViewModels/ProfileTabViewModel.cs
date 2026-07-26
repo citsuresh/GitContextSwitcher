@@ -582,7 +582,8 @@ namespace GitContextSwitcher.UI.ViewModels
                                             changes.Add(new GitContextSwitcher.Core.Models.ContextFileEntry
                                             {
                                                 Path = fc.Path?.Replace(System.IO.Path.DirectorySeparatorChar, '/') ?? string.Empty,
-                                                Change = fc.Kind.ToString()
+                                                Change = fc.Kind.ToString(),
+                                                IsStaged = fc.IsStaged
                                             });
                                         }
                                     }

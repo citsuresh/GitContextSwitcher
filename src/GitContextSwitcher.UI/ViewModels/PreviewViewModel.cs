@@ -62,6 +62,18 @@ namespace GitContextSwitcher.UI.ViewModels
                 }
             }
 
+            // Whether this file was staged at the time the context was saved. Only meaningful for
+            // leaf (file) nodes; used to place the node under the "Staged Changes" vs "Changes"
+            // group root, matching the pending-changes tree's grouping.
+            private bool _isStaged;
+            public bool IsStaged { get => _isStaged; set => SetProperty(ref _isStaged, value); }
+
+            // Original position of this file within the saved context's file list (context.json).
+            // Used to preserve the same file ordering as the pending-changes tree, which lists
+            // files in git-status order rather than alphabetically. Directories default to
+            // int.MaxValue so they don't influence sibling-file ordering.
+            public int SortOrder { get; set; } = int.MaxValue;
+
             // Properties used by Pending changes tree template.
             // Icon/brush/suffix logic is shared with ProfileTabViewModel.FileTreeNode via GitChangeKindDisplay.
             public string DisplayIcon => GitChangeKindDisplay.GetDisplayIcon(ChangeType, IsDirectory);
@@ -229,6 +241,28 @@ namespace GitContextSwitcher.UI.ViewModels
         // Expose a monotonically-increasing generation id to help the view ignore stale diff models
         public int DiffGeneration => _generation;
 
+        // Recursively partitions a tree node's children so directories come before files. Files are
+        // ordered by their original position in context.json (git-status order), matching the
+        // ordering used by the pending-changes tree in ProfileTabViewModel. Directories are ordered
+        // by name since they have no corresponding git-status order.
+        private static void SortFileTreeNode(FileTreeNode node)
+        {
+            if (node.Children.Count == 0) return;
+
+            var sorted = node.Children
+                .OrderByDescending(n => n.IsDirectory)
+                .ThenBy(n => n.IsDirectory ? n.Name : null, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(n => n.SortOrder)
+                .ToList();
+
+            node.Children.Clear();
+            foreach (var child in sorted)
+            {
+                SortFileTreeNode(child);
+                node.Children.Add(child);
+            }
+        }
+
         public async Task LoadAsync()
         {
             // ObservableCollection instances bound to WPF CollectionViews (Files, FileTree, and
@@ -272,8 +306,13 @@ namespace GitContextSwitcher.UI.ViewModels
                 var list = await _mgr.ListContextFilesAsync(_profileId, _context.Id);
                 if (list != null)
                 {
-                    // Build a simple change-type lookup from context.json if present
-                    var changeLookup = new System.Collections.Generic.Dictionary<string, GitContextSwitcher.Core.Models.GitChangeKind>(StringComparer.OrdinalIgnoreCase);
+                    // Build a simple change-type + staged-status lookup from context.json if present
+                    var changeLookup = new System.Collections.Generic.Dictionary<string, (GitContextSwitcher.Core.Models.GitChangeKind Kind, bool IsStaged)>(StringComparer.OrdinalIgnoreCase);
+                    // Preserves the original ordering of files as they appear in context.json (git-status order),
+                    // so the preview tree can match the pending-changes tree's file ordering instead of the
+                    // filesystem enumeration order returned by ListContextFilesAsync.
+                    var orderLookup = new System.Collections.Generic.Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    var orderIndex = 0;
                     try
                     {
                         using var doc = System.Text.Json.JsonDocument.Parse(ContextJson ?? string.Empty);
@@ -315,15 +354,22 @@ namespace GitContextSwitcher.UI.ViewModels
                                                 case "untracked": ct = GitContextSwitcher.Core.Models.GitChangeKind.Untracked; break;
                                             }
 
+                                            var isStaged = it.TryGetProperty("isStaged", out var stagedEl) && stagedEl.ValueKind == System.Text.Json.JsonValueKind.True;
+
                                             try
                                             {
                                                 // Normalize and store multiple key variants so lookups succeed regardless of separator style
                                                 var keyOs = rawPath.Replace('/', System.IO.Path.DirectorySeparatorChar).Replace('\\', System.IO.Path.DirectorySeparatorChar);
                                                 var keyFwd = rawPath.Replace('\\', '/');
                                                 var fileName = System.IO.Path.GetFileName(rawPath);
-                                                if (!string.IsNullOrWhiteSpace(keyOs)) changeLookup[keyOs] = ct;
-                                                if (!string.IsNullOrWhiteSpace(keyFwd)) changeLookup[keyFwd] = ct;
-                                                if (!string.IsNullOrWhiteSpace(fileName)) changeLookup[fileName] = ct;
+                                                if (!string.IsNullOrWhiteSpace(keyOs)) changeLookup[keyOs] = (ct, isStaged);
+                                                if (!string.IsNullOrWhiteSpace(keyFwd)) changeLookup[keyFwd] = (ct, isStaged);
+                                                if (!string.IsNullOrWhiteSpace(fileName)) changeLookup[fileName] = (ct, isStaged);
+
+                                                var order = orderIndex++;
+                                                if (!string.IsNullOrWhiteSpace(keyOs)) orderLookup[keyOs] = order;
+                                                if (!string.IsNullOrWhiteSpace(keyFwd)) orderLookup[keyFwd] = order;
+                                                if (!string.IsNullOrWhiteSpace(fileName)) orderLookup[fileName] = order;
                                             }
                                             catch { }
                                         }
@@ -333,7 +379,13 @@ namespace GitContextSwitcher.UI.ViewModels
                         }
                     }
                     catch { }
-                    // Only include files under the WithHierarchy folder
+                    // Only include files under the WithHierarchy folder. Group into "Staged Changes"
+                    // and "Changes" top-level nodes, matching the pending-changes tree's grouping.
+                    var stagedRoot = new FileTreeNode { IsDirectory = true };
+                    var changesRoot = new FileTreeNode { IsDirectory = true };
+                    var stagedCount = 0;
+                    var unstagedCount = 0;
+
                     foreach (var f in list)
                     {
                         var rel = System.IO.Path.GetRelativePath(ctxFolder, f);
@@ -344,84 +396,96 @@ namespace GitContextSwitcher.UI.ViewModels
                         // Show relative names (for flat list)
                         Files.Add(System.IO.Path.GetFileName(f));
 
-                        // Build hierarchical tree only for WithHierarchy content
-                        var current = FileTree;
-                            for (int i = 0; i < parts.Length; i++)
+                        // Relative path under WithHierarchy (used both for change-lookup and for
+                        // building the hierarchy under the chosen group root).
+                        var relParts = parts.Skip(1).ToArray();
+                        if (relParts.Length == 0) continue;
+                        var relPath = System.IO.Path.Combine(relParts);
+                        var leafName = relParts[^1];
+
+                        // Try a few matching strategies to tolerate separator and prefix differences
+                        (GitContextSwitcher.Core.Models.GitChangeKind Kind, bool IsStaged)? found = null;
+                        if (changeLookup.TryGetValue(relPath, out var e1)) found = e1;
+                        if (found == null && changeLookup.TryGetValue(leafName, out var e2)) found = e2;
+                        if (found == null)
+                        {
+                            try
                             {
-                                var name = parts[i];
-                                // Rename the exported root folder "WithHierarchy" to a friendlier label "Changes"
-                                if (i == 0 && string.Equals(name, "WithHierarchy", StringComparison.OrdinalIgnoreCase))
+                                var relFwd = relPath.Replace(System.IO.Path.DirectorySeparatorChar, '/');
+                                if (changeLookup.TryGetValue(relFwd, out var e3)) found = e3;
+                            }
+                            catch { }
+                        }
+                        if (found == null)
+                        {
+                            try
+                            {
+                                var relOs = relPath.Replace('/', System.IO.Path.DirectorySeparatorChar).Replace('\\', System.IO.Path.DirectorySeparatorChar);
+                                if (changeLookup.TryGetValue(relOs, out var e4)) found = e4;
+                            }
+                            catch { }
+                        }
+                        if (found == null)
+                        {
+                            try
+                            {
+                                var relNorm = relPath.Replace(System.IO.Path.DirectorySeparatorChar, '/');
+                                foreach (var kv in changeLookup)
                                 {
-                                    name = "Changes";
+                                    var keyNorm = kv.Key.Replace(System.IO.Path.DirectorySeparatorChar, '/');
+                                    if (keyNorm.EndsWith(relNorm, StringComparison.OrdinalIgnoreCase) || relNorm.EndsWith(keyNorm, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        found = kv.Value;
+                                        break;
+                                    }
                                 }
+                            }
+                            catch { }
+                        }
+
+                        var isStagedFile = found?.IsStaged ?? false;
+                        var groupRoot = isStagedFile ? stagedRoot : changesRoot;
+                        if (isStagedFile) stagedCount++; else unstagedCount++;
+
+                        // Build hierarchical tree under the chosen group root
+                        var current = groupRoot.Children;
+                        for (int i = 0; i < relParts.Length; i++)
+                        {
+                            var name = relParts[i];
                             var node = current.FirstOrDefault(n => n.Name == name);
                             if (node == null)
                             {
-                                node = new FileTreeNode { Name = name, IsDirectory = (i < parts.Length - 1) };
+                                node = new FileTreeNode { Name = name, IsDirectory = (i < relParts.Length - 1) };
                                 current.Add(node);
                             }
-                            // attach change type if available (match by relative path from WithHierarchy)
-                            if (i == parts.Length - 1)
+                            if (i == relParts.Length - 1)
                             {
-                                var relPath = System.IO.Path.Combine(parts.Skip(1).ToArray());
-                                if (string.IsNullOrEmpty(relPath)) relPath = name;
-
-                                // Try a few matching strategies to tolerate separator and prefix differences
-                                GitContextSwitcher.Core.Models.GitChangeKind? found = null;
-                                // 1) direct lookup
-                                if (changeLookup.TryGetValue(relPath, out var ct1)) found = ct1;
-                                // 2) filename-only
-                                if (found == null && changeLookup.TryGetValue(name, out var ct2)) found = ct2;
-                                // 3) forward-slash normalized
-                                if (found == null)
-                                {
-                                    try
-                                    {
-                                        var relFwd = relPath.Replace(System.IO.Path.DirectorySeparatorChar, '/');
-                                        if (changeLookup.TryGetValue(relFwd, out var ct3)) found = ct3;
-                                    }
-                                    catch { }
-                                }
-                                // 4) os-sep normalized
-                                if (found == null)
-                                {
-                                    try
-                                    {
-                                        var relOs = relPath.Replace('/', System.IO.Path.DirectorySeparatorChar).Replace('\\', System.IO.Path.DirectorySeparatorChar);
-                                        if (changeLookup.TryGetValue(relOs, out var ct4)) found = ct4;
-                                    }
-                                    catch { }
-                                }
-                                // 5) suffix match - handle cases where stored paths are relative from repo root
-                                if (found == null)
-                                {
-                                    try
-                                    {
-                                        var relNorm = relPath.Replace(System.IO.Path.DirectorySeparatorChar, '/');
-                                        foreach (var kv in changeLookup)
-                                        {
-                                            var keyNorm = kv.Key.Replace(System.IO.Path.DirectorySeparatorChar, '/');
-                                            if (keyNorm.EndsWith(relNorm, StringComparison.OrdinalIgnoreCase) || relNorm.EndsWith(keyNorm, StringComparison.OrdinalIgnoreCase))
-                                            {
-                                                found = kv.Value;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    catch { }
-                                }
-
-                                if (found.HasValue)
-                                {
-                                    node.ChangeType = found.Value;
-                                }
-                            }
-                            if (i == parts.Length - 1)
-                            {
+                                if (found.HasValue) node.ChangeType = found.Value.Kind;
+                                node.IsStaged = found?.IsStaged ?? false;
                                 node.FullPath = f;
+
+                                var order = int.MaxValue;
+                                if (orderLookup.TryGetValue(relPath, out var o1)) order = o1;
+                                else if (orderLookup.TryGetValue(leafName, out var o2)) order = o2;
+                                node.SortOrder = order;
                             }
                             current = node.Children;
                         }
+                    }
+
+                    // Sort directories before files, then alphabetically, matching the pending-changes tree
+                    SortFileTreeNode(stagedRoot);
+                    SortFileTreeNode(changesRoot);
+
+                    if (stagedRoot.Children.Any())
+                    {
+                        stagedRoot.Name = $"Staged Changes ({stagedCount})";
+                        FileTree.Add(stagedRoot);
+                    }
+                    if (changesRoot.Children.Any())
+                    {
+                        changesRoot.Name = $"Changes ({unstagedCount})";
+                        FileTree.Add(changesRoot);
                     }
                 }
             }
