@@ -14,6 +14,9 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 	ProjectSection(SolutionItems) = preProject
 		docs\CODE_SUMMARY.md = docs\CODE_SUMMARY.md
 		docs\DESIGN_DECISIONS.md = docs\DESIGN_DECISIONS.md
+		docs\full-graph.json = docs\full-graph.json
+		docs\graph-viewer.html = docs\graph-viewer.html
+		docs\project-dependencies.json = docs\project-dependencies.json
 		docs\PROJECT_STATE.md = docs\PROJECT_STATE.md
 		docs\ROADMAP.md = docs\ROADMAP.md
 	EndProjectSection
