@@ -62,15 +62,25 @@ namespace GitContextSwitcher.Infrastructure.Services
         }
 
         // Apply a stash given by stash ref (SHA) to restore working tree changes. Returns true on success.
+        // Uses '--index' so files that were staged when the stash was created come back staged
+        // (instead of everything being restored as unstaged). Falls back to a plain apply if the
+        // index-based apply fails (e.g. the current index no longer matches what the stash expects).
         public static async Task<bool> ApplyStashAsync(string repoPath, string stashRef)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(stashRef)) return false;
-                // Use 'git stash apply <sha>' to apply without dropping the stash
-                var args = "stash apply " + Quote(stashRef);
-                var run = await RunGitAsync(repoPath, args).ConfigureAwait(false);
-                return run.exitCode == 0;
+                // Use 'git stash apply --index <sha>' to apply without dropping the stash,
+                // while preserving the original staged/unstaged split.
+                var indexArgs = "stash apply --index " + Quote(stashRef);
+                var run = await RunGitAsync(repoPath, indexArgs).ConfigureAwait(false);
+                if (run.exitCode == 0) return true;
+
+                // Fallback: reapply without --index (everything lands as unstaged) rather than
+                // leaving the working tree without its changes restored.
+                var plainArgs = "stash apply " + Quote(stashRef);
+                var fallbackRun = await RunGitAsync(repoPath, plainArgs).ConfigureAwait(false);
+                return fallbackRun.exitCode == 0;
             }
             catch { return false; }
         }
