@@ -133,15 +133,9 @@ namespace GitContextSwitcher.UI.Views
                     var viewDiffObj = this.FindName("ViewPendingDiffButton");
                     if (viewDiffObj is System.Windows.Controls.Button viewDiffBtn)
                     {
-                        viewDiffBtn.Click += (s, e) =>
-                        {
-                            try
-                            {
-                                // Reuse the same handler used for double-click on the TreeView
-                                PendingTreeView_MouseDoubleClick(this, null);
-                            }
-                            catch { }
-                        };
+                        // Unsubscribe first so repeated double-clicks don't stack duplicate handlers.
+                        viewDiffBtn.Click -= ViewDiffButton_Click;
+                        viewDiffBtn.Click += ViewDiffButton_Click;
                     }
                 }
                 catch { }
@@ -903,17 +897,9 @@ namespace GitContextSwitcher.UI.Views
                     var refreshBtnObj = this.FindName("RefreshSavedContextsButton");
                     if (refreshBtnObj is System.Windows.Controls.Button rbtn)
                     {
-                        rbtn.Click += async (s, e) =>
-                        {
-                            try
-                            {
-                                if (_vm != null)
-                                {
-                                    await _vm.RefreshSavedContextsAsync().ConfigureAwait(false);
-                                }
-                            }
-                            catch { }
-                        };
+                        // Unsubscribe first so repeated DataContextChanged firings don't stack duplicate handlers.
+                        rbtn.Click -= RefreshSavedContextsButton_Click;
+                        rbtn.Click += RefreshSavedContextsButton_Click;
                     }
                 }
                 catch { }
@@ -924,30 +910,11 @@ namespace GitContextSwitcher.UI.Views
                     var previewObj = this.FindName("PreviewContextButton");
                     if (previewObj is System.Windows.Controls.Button previewBtn)
                     {
-                        previewBtn.Click += (s, e) =>
-                        {
-                            try
-                            {
-                                if (_vm == null) return;
-                                var dg = this.FindName("SavedContextsGrid") as System.Windows.Controls.DataGrid;
-                                if (dg?.SelectedItem is GitContextSwitcher.Core.Models.SavedWorkContext sc)
-                                {
-                                    var pv = new ViewModels.PreviewViewModel(_vm.Profile.Id, sc);
-                                    var win = new PreviewWindow { Owner = Window.GetWindow(this), DataContext = pv };
-                                    // Set the preview pane DataContext inside the window
-                                    try
-                                    {
-                                        var inner = win.FindName("InnerPreviewPane") as Views.PreviewPane;
-                                        if (inner != null) inner.DataContext = pv;
-                                    }
-                                    catch { }
-
-                                    _ = pv.LoadAsync();
-                                    win.ShowDialog();
-                                }
-                            }
-                            catch { }
-                        };
+                        // Unsubscribe first so repeated DataContextChanged firings don't stack duplicate
+                        // handlers, which previously caused the preview window to reopen multiple times
+                        // after being closed.
+                        previewBtn.Click -= PreviewContextButton_Click;
+                        previewBtn.Click += PreviewContextButton_Click;
                     }
                 }
                 catch { }
@@ -1402,6 +1369,43 @@ namespace GitContextSwitcher.UI.Views
                     e.Handled = true;
                 }
             }
+        }
+
+        private async void RefreshSavedContextsButton_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_vm != null)
+                {
+                    await _vm.RefreshSavedContextsAsync().ConfigureAwait(false);
+                }
+            }
+            catch { }
+        }
+
+        private void PreviewContextButton_Click(object? sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (_vm == null) return;
+                var dg = this.FindName("SavedContextsGrid") as System.Windows.Controls.DataGrid;
+                if (dg?.SelectedItem is GitContextSwitcher.Core.Models.SavedWorkContext sc)
+                {
+                    var pv = new ViewModels.PreviewViewModel(_vm.Profile.Id, sc);
+                    var win = new PreviewWindow { Owner = Window.GetWindow(this), DataContext = pv };
+                    // Set the preview pane DataContext inside the window
+                    try
+                    {
+                        var inner = win.FindName("InnerPreviewPane") as Views.PreviewPane;
+                        if (inner != null) inner.DataContext = pv;
+                    }
+                    catch { }
+
+                    _ = pv.LoadAsync();
+                    win.ShowDialog();
+                }
+            }
+            catch { }
         }
 
         private void ClearRepoInfo()

@@ -99,7 +99,7 @@ namespace GitContextSwitcher.Infrastructure.Services
         {
             var result = new List<string>();
             if (string.IsNullOrWhiteSpace(repoPath) || !Directory.Exists(repoPath)) return result;
-            var (code, outp, err) = await RunGitAsync(repoPath, "status --porcelain=2 -z").ConfigureAwait(false);
+            var (code, outp, err) = await RunGitAsync(repoPath, "status --porcelain=2 -z --untracked-files=all").ConfigureAwait(false);
             if (code != 0) return result;
             try
             {

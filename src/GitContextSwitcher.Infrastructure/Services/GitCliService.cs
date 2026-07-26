@@ -32,7 +32,7 @@ namespace GitContextSwitcher.Infrastructure.Services
                     return outp.Trim();
                 }
 
-                var status = RunGit("status --porcelain");
+                var status = RunGit("status --porcelain --untracked-files=all");
                 System.Diagnostics.Debug.WriteLine($"[GitCliService] status for '{repoPath}':\n{status}");
                 // raw status logged above for diagnostics
                 // Parse porcelain lines only when output is present.
@@ -118,7 +118,7 @@ namespace GitContextSwitcher.Infrastructure.Services
                     return outp.Trim();
                 }
 
-                var status = RunGit("status --porcelain");
+                var status = RunGit("status --porcelain --untracked-files=all");
                 System.Diagnostics.Debug.WriteLine($"[GitCliService] status for '{repoPath}':\n{status}");
                 if (!string.IsNullOrWhiteSpace(status))
                 {
@@ -178,7 +178,7 @@ namespace GitContextSwitcher.Infrastructure.Services
                 var raw = string.Empty;
                 try
                 {
-                    raw = RunGit("status --porcelain=2 -z");
+                    raw = RunGit("status --porcelain=2 -z --untracked-files=all");
                 }
                 catch (Exception ex)
                 {
@@ -357,7 +357,7 @@ namespace GitContextSwitcher.Infrastructure.Services
                             if (parts.Length >= 4 && DateTimeOffset.TryParse(parts[3], out var d)) info.HeadDate = d;
                         }
 
-                        var status = RunGit("status --porcelain");
+                        var status = RunGit("status --porcelain --untracked-files=all");
                         if (!string.IsNullOrWhiteSpace(status))
                         {
                             var lines = status.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
