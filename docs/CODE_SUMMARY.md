@@ -62,12 +62,7 @@ graph LR
 | `SaveContextDialog` | Views/SaveContextDialog.xaml(.cs) | Dialog to name/describe a new saved context. |
 | `RepoInfoControl` | Views/RepoInfoControl.xaml(.cs) | Displays current repo branch/sha/status summary. |
 
-## Key Flows
-- **App startup**: `App.xaml.cs` -> `MainViewModel` (async quick-load) -> `MainWindow` binds `Profiles`/`SelectedProfile` -> each tab creates a `ProfileTabViewModel`.
-- **Save context**: `ProfileTabControl` save action -> `ProfileTabViewModel` -> `GitExportHelper` (export changed files/patch) -> `ProfileStorageManager` (persist under `SavedContexts/<contextId>`).
-- **Preview saved context**: `PreviewContextButton` click (`ProfileTabControl.xaml.cs`) -> `new PreviewViewModel(...)` -> `LoadAsync()` (reads `context.json`, builds `Files`/`FileTree` on UI thread) -> `PreviewWindow`/`PreviewPane` builds side-by-side diff (local repo path = left, saved context content = right) with a warning banner that left side may contain local changes.
-- **Pending changes diff**: `ProfileTabControl` pending tree double-click or "View Diff" button -> `DiffWindow` (side-by-side DiffPlex view) for the selected leaf file; buttons enabled only when a file (non-directory) leaf node is selected.
-- **Profile persistence**: `ProfileFileStore`/`ProfileStorageManager` write under `%LocalAppData%\GitContextSwitcher\profiles\<profileGuid>\` with locking/atomic writes to avoid concurrent-access exceptions.
+See `docs/KEY_FLOWS.md` for traced end-to-end call flows.
 
 ## Notes for Agents
 - WPF `ObservableCollection`s bound to UI (e.g. `PreviewViewModel.Files`, `FileTree`, `FileTreeNode.Children`) must only be mutated on the Dispatcher thread — avoid `ConfigureAwait(false)` before such mutations, or explicitly marshal via `Dispatcher.InvokeAsync`.
