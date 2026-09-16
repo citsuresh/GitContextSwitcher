@@ -4,36 +4,38 @@
 > tasks, and recently changed files as of the last session.
 
 ## Current Focus
-User verified the 4 previously-open items are working fine (View Diff button enablement, preview
-window, PreviewContextButton state, full solution build). Just completed: extracted duplicated
-`GitChangeKind` icon/brush/suffix display logic from `PreviewViewModel.FileTreeNode` and
-`ProfileTabViewModel.FileTreeNode` into a shared `GitChangeKindDisplay` static helper. Next up:
-implement roadmap item to make the saved-context preview left-side diff source from repo
-HEAD/blob instead of the local working tree.
+Re-synced project memory to `project-memory-management-graph` skill v10 (Bootstrap re-run:
+version marker bumped 9→10, graph rebuilt to 582 nodes/2034 edges). Then added clipboard/copy
+UX improvements: (1) selected-row copy-to-clipboard support for the Saved Work Contexts and
+History `DataGrid`s via a new shared `CopyableDataGridStyle` (Ctrl+C / right-click "Copy",
+extended full-row selection), including `ClipboardContentBinding` on the template columns
+(Description, Notes, Error) so their text is included in the copied output; (2) made the
+Preview window's "Context details" name/value tree selectable/copyable by swapping the
+read-only `TextBlock`s for borderless read-only `TextBox`es. Build verified after stopping the
+running debug instance that was locking output DLLs.
+Next up: implement roadmap item to make the saved-context preview left-side diff source from
+repo HEAD/blob instead of the local working tree (unchanged from before this session).
 
 ## Open Tasks / Known Issues
 - Implement preview left-side diff sourced from repo HEAD/blob (via `git show <sha>:<path>`)
   instead of local working tree, with graceful fallback (to current local-path + warning banner
   behavior) if the stored commit SHA no longer exists in the repo (e.g. after rebase/GC), and
   correct handling for Added (not present at HEAD) / Deleted (present at HEAD, absent now) files.
+- Consider extending `CopyableDataGridStyle` to any other read-only grids added in the future
+  (currently applied to Saved Work Contexts and History grids only).
 
 ## Recently Changed Files
-- `src/GitContextSwitcher.UI/ViewModels/GitChangeKindDisplay.cs` — new shared static helper for
-  `GitChangeKind` icon/brush/suffix display logic.
-- `src/GitContextSwitcher.UI/ViewModels/PreviewViewModel.cs` — `FileTreeNode` display properties
-  now delegate to `GitChangeKindDisplay`; earlier also received the `LoadAsync()`
-  Dispatcher-thread guard + removed `ConfigureAwait(false)` before UI collection mutations.
-- `src/GitContextSwitcher.UI/ViewModels/ProfileTabViewModel.cs` — `FileTreeNode` display
-  properties now delegate to `GitChangeKindDisplay`.
-- `.github/copilot-instructions.md` — added git commit/push email guidance and the Persistent
-  Project Memory section.
-- `.github/prompts/bootstrap-project-memory.prompt.md`, `.github/prompts/end-session.prompt.md`
-  — bootstrap prompt files copied into the repo.
-- `docs/CODE_SUMMARY.md`, `docs/DESIGN_DECISIONS.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`
-  — created/updated as part of project memory bootstrap and this refactor.
-- `GitContextSwitcher.sln` — added a "Solution Items" solution folder referencing the four
-  `docs/*.md` files.
+- `.github/copilot-instructions.md` — skill-version marker bumped 9→10.
+- `docs/full-graph.json`, `docs/project-dependencies.json` — rebuilt (582 nodes / 2034 edges).
+- `src/GitContextSwitcher.UI/Themes/SharedStyles.xaml` — new `CopyableDataGridStyle` +
+  `DataGridCopyContextMenu` for row copy-to-clipboard support.
+- `src/GitContextSwitcher.UI/Views/ProfileTabControl.xaml` — applied `CopyableDataGridStyle` to
+  the Saved Contexts and History grids; added `ClipboardContentBinding` to their template
+  columns (Description; Notes, Error).
+- `src/GitContextSwitcher.UI/Views/PreviewWindow.xaml` — context-details tree now uses
+  selectable/copyable read-only `TextBox`es instead of `TextBlock`s.
 
 ## Session Notes
-- Git commits/pushes for this repo should use the email `citsuresh@rediffmail.com` (per user
-  instruction; do not auto-commit — user reviews/commits manually).
+- Row copy relies on WPF `DataGrid`'s built-in `ApplicationCommands.Copy`; `DataGridBoundColumn`s
+  copy automatically, but `DataGridTemplateColumn`s need an explicit `ClipboardContentBinding` to
+  be included in the copied text — easy to miss when a grid mixes bound and templated columns.

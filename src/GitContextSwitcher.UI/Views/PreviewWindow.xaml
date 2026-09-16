@@ -18,9 +18,9 @@
                             <TreeView.ItemTemplate>
                                 <HierarchicalDataTemplate ItemsSource="{Binding Children}">
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                        <TextBox Text="{Binding Name, Mode=OneWay}" FontWeight="SemiBold" IsReadOnly="True" IsReadOnlyCaretVisible="True" BorderThickness="0" Background="Transparent" Padding="0" Margin="0" VerticalAlignment="Center" />
                                         <TextBlock Text=": " />
-                                        <TextBlock Text="{Binding Value}" />
+                                        <TextBox Text="{Binding Value, Mode=OneWay}" IsReadOnly="True" IsReadOnlyCaretVisible="True" BorderThickness="0" Background="Transparent" Padding="0" Margin="0" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </HierarchicalDataTemplate>
                             </TreeView.ItemTemplate>
@@ -33,3 +33,4 @@
         <views:PreviewPane Grid.Row="1" x:Name="InnerPreviewPane" Margin="8" />
     </Grid>
 </Window>
+

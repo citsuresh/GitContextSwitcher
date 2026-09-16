@@ -365,11 +365,11 @@
                         </StackPanel>
 
                         <Grid Grid.Row="2">
-                            <DataGrid x:Name="SavedContextsGrid" ItemsSource="{Binding SavedContexts}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"  CanUserResizeColumns="True" CanUserReorderColumns="True"  HeadersVisibility="Column" SelectionMode="Single" RowHeaderWidth="0" MinHeight="80" MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalAlignment="Stretch">
+                            <DataGrid x:Name="SavedContextsGrid" Style="{StaticResource CopyableDataGridStyle}" ItemsSource="{Binding SavedContexts}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" CanUserDeleteRows="False"  CanUserResizeColumns="True" CanUserReorderColumns="True"  HeadersVisibility="Column" RowHeaderWidth="0" MinHeight="80" MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalAlignment="Stretch">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn CanUserResize="True" Header="Created" Binding="{Binding CreatedAt, Converter={StaticResource UtcToLocalDateTimeConverter}, StringFormat={}{0:G}}" Width="160" MinWidth="140" />
                                     <DataGridTextColumn CanUserResize="True" Header="ID" Binding="{Binding Id}" MinWidth="260" />
-                                    <DataGridTemplateColumn CanUserResize="True" Header="Description" MinWidth="200">
+                                    <DataGridTemplateColumn CanUserResize="True" Header="Description" MinWidth="200" ClipboardContentBinding="{Binding Description}">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock TextWrapping="Wrap">
@@ -462,12 +462,12 @@
                         <Grid Grid.Row="1">
                             <!-- Display history entries in a compact DataGrid for easier scanning and copy/paste -->
                             <DataGrid ItemsSource="{Binding HistoryEntries}"
+                                      Style="{StaticResource CopyableDataGridStyle}"
                                       AutoGenerateColumns="False"
                                       IsReadOnly="True"
                                       CanUserAddRows="False"
                                       CanUserDeleteRows="False"
                                       HeadersVisibility="Column"
-                                      SelectionMode="Single"
                                       RowHeaderWidth="0"
                                       MinHeight="80"
                                       MaxHeight="240"
@@ -479,7 +479,7 @@
                                 <DataGrid.Columns>
                                     <DataGridTextColumn CanUserResize="True" Header="Timestamp" Binding="{Binding Timestamp, Converter={StaticResource UtcToLocalDateTimeConverter}, StringFormat={}{0:G}}" Width="180" MinWidth="140" />
                                     <DataGridTextColumn CanUserResize="True" Header="Action" Binding="{Binding Action}" Width="160" MinWidth="120" />
-                                    <DataGridTemplateColumn CanUserResize="True" Header="Notes" Width="*" MinWidth="160">
+                                    <DataGridTemplateColumn CanUserResize="True" Header="Notes" Width="*" MinWidth="160" ClipboardContentBinding="{Binding Notes}">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Notes}" TextWrapping="Wrap" />
@@ -487,7 +487,7 @@
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
                                     <DataGridTextColumn CanUserResize="True" Header="User" Binding="{Binding User}" Width="140" MinWidth="100" />
-                                    <DataGridTemplateColumn CanUserResize="True" Header="Error" Width="220" MinWidth="140">
+                                    <DataGridTemplateColumn CanUserResize="True" Header="Error" Width="220" MinWidth="140" ClipboardContentBinding="{Binding Error}">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Error}" Foreground="DarkRed" TextWrapping="Wrap" />

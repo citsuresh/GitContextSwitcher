@@ -185,6 +185,20 @@
     </Setter>
   </Style>
 
+  <!-- Shared context menu offering a "Copy" item for DataGrids, bound to the built-in Copy command -->
+  <ContextMenu x:Key="DataGridCopyContextMenu">
+    <MenuItem Header="Copy" Command="ApplicationCommands.Copy" />
+  </ContextMenu>
+
+  <!-- Apply to any read-only DataGrid to allow selecting/copying one or more rows to the clipboard
+       (via Ctrl+C or right-click "Copy"). Rows are copied as tab-separated values, one row per line. -->
+  <Style x:Key="CopyableDataGridStyle" TargetType="DataGrid">
+    <Setter Property="SelectionMode" Value="Extended" />
+    <Setter Property="SelectionUnit" Value="FullRow" />
+    <Setter Property="ClipboardCopyMode" Value="ExcludeHeader" />
+    <Setter Property="ContextMenu" Value="{StaticResource DataGridCopyContextMenu}" />
+  </Style>
+
   <Style x:Key="TabCloseButtonStyle" TargetType="Button" BasedOn="{StaticResource InlineIconButtonStyle}">
     <Setter Property="Width" Value="20" />
     <Setter Property="Height" Value="20" />

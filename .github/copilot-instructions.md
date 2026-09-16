@@ -1,6 +1,6 @@
 # Copilot Instructions — GitContextSwitcher
 
-<!-- project-memory-management-graph: skill-version=9 -->
+<!-- project-memory-management-graph: skill-version=10 -->
 ## Persistent Project Memory
 - Before exploring the codebase with search tools for a new task, read `docs/CODE_SUMMARY.md`
   and `docs/DESIGN_DECISIONS.md` if they exist. If they don't exist, fall back to normal
