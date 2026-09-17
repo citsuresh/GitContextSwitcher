@@ -4,15 +4,13 @@
 > tasks, and recently changed files as of the last session.
 
 ## Current Focus
-Re-synced project memory to `project-memory-management-graph` skill v10 (Bootstrap re-run:
-version marker bumped 9→10, graph rebuilt to 582 nodes/2034 edges). Then added clipboard/copy
-UX improvements: (1) selected-row copy-to-clipboard support for the Saved Work Contexts and
-History `DataGrid`s via a new shared `CopyableDataGridStyle` (Ctrl+C / right-click "Copy",
-extended full-row selection), including `ClipboardContentBinding` on the template columns
-(Description, Notes, Error) so their text is included in the copied output; (2) made the
-Preview window's "Context details" name/value tree selectable/copyable by swapping the
-read-only `TextBlock`s for borderless read-only `TextBox`es. Build verified after stopping the
-running debug instance that was locking output DLLs.
+Designed and wired in an app icon (branch-fork glyph over stacked context cards, blue/green) as
+`src/GitContextSwitcher.UI/app_icon.ico` (7 embedded sizes 16-256px; the first draft only embedded
+a 16px frame, causing blurry upscaling at large icon sizes — fixed by re-saving with all sizes
+explicitly). Wired via `ApplicationIcon` in the UI `.csproj` and `Icon="app_icon.ico"` on
+`MainWindow.xaml`. Cleaned up unused draft icon variants from `assets/`, keeping only the chosen
+icon's source files. Updated `README.md` (was stale "initial scaffold" text) to describe the app,
+its projects, and getting-started steps.
 Next up: implement roadmap item to make the saved-context preview left-side diff source from
 repo HEAD/blob instead of the local working tree (unchanged from before this session).
 
@@ -25,17 +23,20 @@ repo HEAD/blob instead of the local working tree (unchanged from before this ses
   (currently applied to Saved Work Contexts and History grids only).
 
 ## Recently Changed Files
-- `.github/copilot-instructions.md` — skill-version marker bumped 9→10.
-- `docs/full-graph.json`, `docs/project-dependencies.json` — rebuilt (582 nodes / 2034 edges).
-- `src/GitContextSwitcher.UI/Themes/SharedStyles.xaml` — new `CopyableDataGridStyle` +
-  `DataGridCopyContextMenu` for row copy-to-clipboard support.
-- `src/GitContextSwitcher.UI/Views/ProfileTabControl.xaml` — applied `CopyableDataGridStyle` to
-  the Saved Contexts and History grids; added `ClipboardContentBinding` to their template
-  columns (Description; Notes, Error).
-- `src/GitContextSwitcher.UI/Views/PreviewWindow.xaml` — context-details tree now uses
-  selectable/copyable read-only `TextBox`es instead of `TextBlock`s.
+- `README.md` — rewritten from stale "initial scaffold" placeholder to an accurate project
+  description, project list, and getting-started steps.
+- `src/GitContextSwitcher.UI/GitContextSwitcher.UI.csproj` — added `ApplicationIcon` and a
+  `Resource` entry for `app_icon.ico`; fixed indentation.
+- `src/GitContextSwitcher.UI/MainWindow.xaml` — added `Icon="app_icon.ico"`.
+- `src/GitContextSwitcher.UI/app_icon.ico` — new app icon (7 sizes, 16-256px).
+- `assets/app_icon.ico`, `assets/app_icon_source.png` — source/reference copies of the chosen
+  icon design; unused draft variants removed.
 
 ## Session Notes
 - Row copy relies on WPF `DataGrid`'s built-in `ApplicationCommands.Copy`; `DataGridBoundColumn`s
   copy automatically, but `DataGridTemplateColumn`s need an explicit `ClipboardContentBinding` to
   be included in the copied text — easy to miss when a grid mixes bound and templated columns.
+- When generating multi-size `.ico` files with Pillow, always verify the embedded sizes
+  afterward (e.g. parse the ICONDIR header) — `Image.save(..., format="ICO", sizes=[...])` can
+  silently produce a single-size file if the source image resolution or resize list isn't handled
+  as expected, leading to blurry upscaling in large icon views.
