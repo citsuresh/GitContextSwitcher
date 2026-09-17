@@ -10,7 +10,8 @@ a 16px frame, causing blurry upscaling at large icon sizes — fixed by re-savin
 explicitly). Wired via `ApplicationIcon` in the UI `.csproj` and `Icon="app_icon.ico"` on
 `MainWindow.xaml`. Cleaned up unused draft icon variants from `assets/`, keeping only the chosen
 icon's source files. Updated `README.md` (was stale "initial scaffold" text) to describe the app,
-its projects, and getting-started steps.
+its projects, and getting-started steps. Changes committed (`924ca5e`) but not yet pushed to
+`origin/main`.
 Next up: implement roadmap item to make the saved-context preview left-side diff source from
 repo HEAD/blob instead of the local working tree (unchanged from before this session).
 
